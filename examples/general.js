@@ -1,6 +1,5 @@
 var nodegit = require("../");
 var path = require("path");
-var Promise = require("nodegit-promise");
 var oid;
 var odb;
 var repo;
@@ -221,7 +220,7 @@ nodegit.Repository.open(path.resolve(__dirname, "../.git"))
         if (entry.isDirectory()) {
           promises.push(entry.getTree().then(dfs));
         } else if (entry.isFile()) {
-          console.log("Tree Entry:", entry.filename());
+          console.log("Tree Entry:", entry.name());
         }
       });
 
@@ -320,7 +319,7 @@ nodegit.Repository.open(path.resolve(__dirname, "../.git"))
 
     // The [index file API][gi] allows you to read, traverse, update and write
     // the Git index file (sometimes thought of as the staging area).
-    return repo.openIndex();
+    return repo.refreshIndex();
   })
 
   .then(function(index) {

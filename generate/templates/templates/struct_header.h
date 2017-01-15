@@ -1,8 +1,13 @@
 #ifndef {{ cppClassName|upper }}_H
 #define {{ cppClassName|upper }}_H
-// generated from struct_header.h
 #include <nan.h>
 #include <string>
+#include <queue>
+#include <utility>
+
+#include "async_baton.h"
+#include "callback_wrapper.h"
+#include "nodegit_wrapper.h"
 
 extern "C" {
   #include <git2.h>
@@ -18,19 +23,14 @@ extern "C" {
 using namespace node;
 using namespace v8;
 
-class {{ cppClassName }} : public ObjectWrap {
+{%partial traits .%}
+
+class {{ cppClassName }} : public NodeGitWrapper<{{ cppClassName }}Traits> {
+    // grant full access to base class
+    friend class NodeGitWrapper<{{ cppClassName }}Traits>;
   public:
-    {{ cppClassName }}({{ cType }}* raw, bool selfFreeing);
-    static Persistent<Function> constructor_template;
-    static void InitializeComponent (Handle<v8::Object> target);
-
-    {{ cType }} *GetValue();
-    {{ cType }} **GetRefValue();
-    void ClearValue();
-
-    static Handle<v8::Value> New(void *raw, bool selfFreeing);
-
-    bool selfFreeing;
+    {{ cppClassName }}({{ cType }}* raw, bool selfFreeing, v8::Local<v8::Object> owner = Local<v8::Object>());
+    static void InitializeComponent (Local<v8::Object> target);
 
     {% each fields as field %}
       {% if not field.ignore %}
@@ -45,17 +45,18 @@ class {{ cppClassName }} : public ObjectWrap {
           );
 
           static void {{ field.name }}_async(uv_async_t* req, int status);
-          static void {{ field.name }}_asyncPromisePolling(uv_async_t* req, int status);
-          struct {{ field.name|titleCase }}Baton {
+          static void {{ field.name }}_promiseCompleted(bool isFulfilled, AsyncBaton *_baton, v8::Local<v8::Value> result);
+          struct {{ field.name|titleCase }}Baton : public AsyncBatonWithResult<{{ field.return.type }}> {
             {% each field.args|argsInfo as arg %}
               {{ arg.cType }} {{ arg.name}};
             {% endeach %}
 
-            uv_async_t req;
-            {{ field.return.type }} result;
-            Persistent<Object> promise;
-            bool done;
+            {{ field.name|titleCase }}Baton(const {{ field.return.type }} &defaultResult)
+              : AsyncBatonWithResult<{{ field.return.type }}>(defaultResult) {
+              }
           };
+          static {{ cppClassName }} * {{ field.name }}_getInstanceFromBaton (
+            {{ field.name|titleCase }}Baton *baton);
         {% endif %}
       {% endif %}
     {% endeach %}
@@ -66,17 +67,15 @@ class {{ cppClassName }} : public ObjectWrap {
 
     void ConstructFields();
 
-    static NAN_METHOD(JSNewFunction);
-
     {% each fields as field %}
       {% if not field.ignore %}
         {% if not field.isEnum %}
           {% if field.isLibgitType %}
-            Persistent<Object> {{ field.name }};
+            Nan::Persistent<Object> {{ field.name }};
           {% elsif field.isCallbackFunction %}
-            NanCallback* {{ field.name }};
+            CallbackWrapper {{ field.name }};
           {% elsif field.payloadFor %}
-            Persistent<Value> {{ field.name }};
+            Nan::Persistent<Value> {{ field.name }};
           {% endif %}
         {% endif %}
 
@@ -85,8 +84,6 @@ class {{ cppClassName }} : public ObjectWrap {
 
       {% endif %}
     {% endeach %}
-
-    {{ cType }} *raw;
 };
 
 #endif

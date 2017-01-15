@@ -2,15 +2,15 @@
 {% if cppClassName == 'String' %}
   if ({{= parsedName =}}){
     {% if size %}
-      to = NanNew<String>({{= parsedName =}}, {{ size }});
+      to = Nan::New<String>({{= parsedName =}}, {{ size }}).ToLocalChecked();
     {% elsif cType == 'char **' %}
-      to = NanNew<String>(*{{= parsedName =}});
+      to = Nan::New<String>(*{{= parsedName =}}).ToLocalChecked();
     {% else %}
-      to = NanNew<String>({{= parsedName =}});
+      to = Nan::New<String>({{= parsedName =}}).ToLocalChecked();
     {% endif %}
   }
   else {
-    to = NanNull();
+    to = Nan::Null();
   }
 
   {% if freeFunctionName %}
@@ -20,28 +20,35 @@
 {% elsif cppClassName|isV8Value %}
 
   {% if isCppClassIntType %}
-    to = NanNew<{{ cppClassName }}>(({{ parsedClassName }}){{= parsedName =}});
+    to = Nan::New<{{ cppClassName }}>(({{ parsedClassName }}){{= parsedName =}});
   {% else %}
-    to = NanNew<{{ cppClassName }}>({% if needsDereference %}*{% endif %}{{= parsedName =}});
+    to = Nan::New<{{ cppClassName }}>({% if needsDereference %}*{% endif %}{{= parsedName =}});
   {% endif %}
 
 {% elsif cppClassName == 'External' %}
 
-  to = NanNew<External>((void *){{= parsedName =}});
+  to = Nan::New<External>((void *){{= parsedName =}});
 
 {% elsif cppClassName == 'Array' %}
 
   {%-- // FIXME this is not general purpose enough. --%}
   {% if size %}
-    Local<Array> tmpArray = NanNew<Array>({{= parsedName =}}->{{ size }});
+    Local<Array> tmpArray = Nan::New<Array>({{= parsedName =}}->{{ size }});
     for (unsigned int i = 0; i < {{= parsedName =}}->{{ size }}; i++) {
-      tmpArray->Set(NanNew<Number>(i), NanNew<String>({{= parsedName =}}->{{ key }}[i]));
+      Nan::Set(tmpArray, Nan::New<Number>(i), Nan::New<String>({{= parsedName =}}->{{ key }}[i]).ToLocalChecked());
     }
   {% else %}
-    Local<Array> tmpArray = NanNew<Array>({{= parsedName =}});
+    Local<Array> tmpArray = Nan::New<Array>({{= parsedName =}});
   {% endif %}
 
   to = tmpArray;
+{% elsif cppClassName == 'GitBuf' %}
+  if ({{= parsedName =}}) {
+    to = Nan::New<String>({{= parsedName =}}->ptr, {{= parsedName = }}->size).ToLocalChecked();
+  }
+  else {
+    to = Nan::Null();
+  }
 {% else %}
   {% if copy %}
     if ({{= parsedName =}} != NULL) {
@@ -52,13 +59,13 @@
   if ({{= parsedName =}} != NULL) {
     // {{= cppClassName }} {{= parsedName }}
     {% if cppClassName == 'Wrapper' %}
-      to = {{ cppClassName }}::New((void *){{= parsedName =}});
+      to = {{ cppClassName }}::New({{= parsedName =}});
     {% else %}
-      to = {{ cppClassName }}::New((void *){{= parsedName =}}, false);
+      to = {{ cppClassName }}::New({{= parsedName =}}, {{ selfFreeing|toBool }} {% if ownedByThis %}, info.This(){% endif %});
     {% endif %}
   }
   else {
-    to = NanNull();
+    to = Nan::Null();
   }
 
 {% endif %}

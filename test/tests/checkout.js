@@ -1,6 +1,5 @@
 var assert = require("assert");
 var path = require("path");
-var Promise = require("nodegit-promise");
 var fse = require("fs-extra");
 var local = path.join.bind(path, __dirname);
 
@@ -76,7 +75,7 @@ describe("Checkout", function() {
     var test = this;
 
     return test.repository.getTagByName("annotated-tag").then(function(tag) {
-      return Checkout.tree(test.repository, test.tag);
+      return Checkout.tree(test.repository, tag);
     }).then(function() {
       return test.repository.getHeadCommit();
     }).then(function(commit) {
@@ -127,13 +126,15 @@ describe("Checkout", function() {
     .then(function(branch) {
       fse.writeFileSync(packageJsonPath, "\n");
 
-      return test.repository.openIndex()
+      return test.repository.refreshIndex()
         .then(function(index) {
-          index.read(1);
-          index.addByPath(packageJsonName);
-          index.write();
-
-          return index.writeTree();
+          return index.addByPath(packageJsonName)
+            .then(function() {
+              return index.write();
+            })
+            .then(function() {
+              return index.writeTree();
+            });
         });
     })
     .then(function(oid) {

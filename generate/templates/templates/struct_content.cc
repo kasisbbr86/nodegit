@@ -1,8 +1,10 @@
-// This is a generated file, modify: generate/templates/struct_content.cc.
 #include <nan.h>
 #include <string.h>
-#include <chrono>
-#include <thread>
+#ifdef WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif // win32
 
 extern "C" {
   #include <git2.h>
@@ -12,8 +14,11 @@ extern "C" {
 }
 
 #include <iostream>
+#include "../include/nodegit.h"
+#include "../include/lock_master.h"
 #include "../include/functions/copy.h"
 #include "../include/{{ filename }}.h"
+#include "nodegit_wrapper.cc"
 
 {% each dependencies as dependency %}
   #include "{{ dependency }}"
@@ -25,23 +30,23 @@ using namespace std;
 
 
 // generated from struct_content.cc
-{{ cppClassName }}::{{ cppClassName }}() {
+{{ cppClassName }}::{{ cppClassName }}() : NodeGitWrapper<{{ cppClassName }}Traits>(NULL, true, v8::Local<v8::Object>())
+{
   {% if ignoreInit == true %}
-  {{ cType }}* wrappedValue = new {{ cType }};
+  this->raw = new {{ cType }};
   {% else %}
   {{ cType }} wrappedValue = {{ cType|upper }}_INIT;
-  {% endif %}
   this->raw = ({{ cType }}*) malloc(sizeof({{ cType }}));
   memcpy(this->raw, &wrappedValue, sizeof({{ cType }}));
+  {% endif %}
 
   this->ConstructFields();
-  this->selfFreeing = true;
 }
 
-{{ cppClassName }}::{{ cppClassName }}({{ cType }}* raw, bool selfFreeing) {
-  this->raw = raw;
+{{ cppClassName }}::{{ cppClassName }}({{ cType }}* raw, bool selfFreeing, v8::Local<v8::Object> owner)
+ : NodeGitWrapper<{{ cppClassName }}Traits>(raw, selfFreeing, owner)
+{
   this->ConstructFields();
-  this->selfFreeing = selfFreeing;
 }
 
 {{ cppClassName }}::~{{ cppClassName }}() {
@@ -49,18 +54,13 @@ using namespace std;
     {% if not field.ignore %}
       {% if not field.isEnum %}
         {% if field.isCallbackFunction %}
-  if (this->{{ field.name }} != NULL) {
-    delete this->{{ field.name }};
+  if (this->{{ field.name }}.HasCallback()) {
     this->raw->{{ fields|payloadFor field.name }} = NULL;
   }
         {% endif %}
       {% endif %}
     {% endif %}
   {% endeach %}
-
-  if (this->selfFreeing) {
-    free(this->raw);
-  }
 }
 
 void {{ cppClassName }}::ConstructFields() {
@@ -69,10 +69,10 @@ void {{ cppClassName }}::ConstructFields() {
       {% if not field.isEnum %}
         {% if field.hasConstructor |or field.isLibgitType %}
           Local<Object> {{ field.name }}Temp = {{ field.cppClassName }}::New(
-            &this->raw->{{ field.name }},
+            {%if not field.cType|isPointer %}&{%endif%}this->raw->{{ field.name }},
             false
           )->ToObject();
-          NanAssignPersistent(this->{{ field.name }}, {{ field.name }}Temp);
+          this->{{ field.name }}.Reset({{ field.name }}Temp);
 
         {% elsif field.isCallbackFunction %}
 
@@ -80,73 +80,41 @@ void {{ cppClassName }}::ConstructFields() {
           // the current instance
           this->raw->{{ field.name }} = NULL;
           this->raw->{{ fields|payloadFor field.name }} = (void *)this;
-          this->{{ field.name }} = NULL;
         {% elsif field.payloadFor %}
 
-          Local<Value> {{ field.name }} = NanUndefined();
-          NanAssignPersistent(this->{{ field.name }}, {{ field.name }});
+          Local<Value> {{ field.name }} = Nan::Undefined();
+          this->{{ field.name }}.Reset({{ field.name }});
         {% endif %}
       {% endif %}
     {% endif %}
   {% endeach %}
 }
 
-void {{ cppClassName }}::InitializeComponent(Handle<v8::Object> target) {
-  NanScope();
+void {{ cppClassName }}::InitializeComponent(Local<v8::Object> target) {
+  Nan::HandleScope scope;
 
-  Local<FunctionTemplate> tpl = NanNew<FunctionTemplate>(JSNewFunction);
+  Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(JSNewFunction);
 
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
-  tpl->SetClassName(NanNew<String>("{{ jsClassName }}"));
+  tpl->SetClassName(Nan::New("{{ jsClassName }}").ToLocalChecked());
 
   {% each fields as field %}
     {% if not field.ignore %}
     {% if not field | isPayload %}
-      tpl->InstanceTemplate()->SetAccessor(NanNew<String>("{{ field.jsFunctionName }}"), Get{{ field.cppFunctionName}}, Set{{ field.cppFunctionName}});
+      Nan::SetAccessor(tpl->InstanceTemplate(), Nan::New("{{ field.jsFunctionName }}").ToLocalChecked(), Get{{ field.cppFunctionName}}, Set{{ field.cppFunctionName}});
     {% endif %}
     {% endif %}
   {% endeach %}
 
-  Local<Function> _constructor_template = tpl->GetFunction();
-  NanAssignPersistent(constructor_template, _constructor_template);
-  target->Set(NanNew<String>("{{ jsClassName }}"), _constructor_template);
-}
+  InitializeTemplate(tpl);
 
-NAN_METHOD({{ cppClassName }}::JSNewFunction) {
-  NanScope();
-  {{ cppClassName }}* instance;
-
-  if (args.Length() == 0 || !args[0]->IsExternal()) {
-    instance = new {{ cppClassName }}();
-  }
-  else {
-    instance = new {{ cppClassName }}(static_cast<{{ cType }}*>(Handle<External>::Cast(args[0])->Value()), args[1]->BooleanValue());
-  }
-
-  instance->Wrap(args.This());
-
-  NanReturnValue(args.This());
-}
-
-Handle<v8::Value> {{ cppClassName }}::New(void* raw, bool selfFreeing) {
-  NanEscapableScope();
-
-  Handle<v8::Value> argv[2] = { NanNew<External>((void *)raw), NanNew<Boolean>(selfFreeing) };
-  return NanEscapeScope(NanNew<Function>({{ cppClassName }}::constructor_template)->NewInstance(2, argv));
-}
-
-{{ cType }} *{{ cppClassName }}::GetValue() {
-  return this->raw;
-}
-
-{{ cType }} **{{ cppClassName }}::GetRefValue() {
-  return this->raw == NULL ? NULL : &this->raw;
-}
-
-void {{ cppClassName }}::ClearValue() {
-  this->raw = NULL;
+  Local<Function> _constructor_template = Nan::GetFunction(tpl).ToLocalChecked();
+  constructor_template.Reset(_constructor_template);
+  Nan::Set(target, Nan::New("{{ jsClassName }}").ToLocalChecked(), _constructor_template);
 }
 
 {% partial fieldAccessors . %}
 
-Persistent<Function> {{ cppClassName }}::constructor_template;
+// force base class template instantiation, to make sure we get all the
+// methods, statics, etc.
+template class NodeGitWrapper<{{ cppClassName }}Traits>;

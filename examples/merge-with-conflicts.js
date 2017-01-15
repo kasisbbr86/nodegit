@@ -49,14 +49,16 @@ fse.remove(path.resolve(__dirname, repoDir))
 
 // Load up the repository index and make our initial commit to HEAD
 .then(function() {
-  return repository.openIndex();
+  return repository.refreshIndex();
 })
 .then(function(index) {
-  index.read(1);
-  index.addByPath(fileName);
-  index.write();
-
-  return index.writeTree();
+  return index.addByPath(fileName)
+    .then(function() {
+      return index.write();
+    })
+    .then(function() {
+      return index.writeTree();
+    });
 })
 .then(function(oid) {
   return repository.createCommit("HEAD", baseSignature,
@@ -94,13 +96,15 @@ fse.remove(path.resolve(__dirname, repoDir))
   );
 })
 .then(function() {
-  return repository.openIndex()
+  return repository.refreshIndex()
     .then(function(index) {
-      index.read(1);
-      index.addByPath(fileName);
-      index.write();
-
-      return index.writeTree();
+      return index.addByPath(fileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     });
 })
 .then(function(oid) {
@@ -122,12 +126,15 @@ fse.remove(path.resolve(__dirname, repoDir))
   );
 })
 .then(function() {
-  return repository.openIndex().then(function(index) {
-    index.read(1);
-    index.addByPath(fileName);
-    index.write();
-
-    return index.writeTree();
+  return repository.refreshIndex()
+    .then(function(index) {
+      return index.addByPath(fileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
   });
 })
 .then(function(oid) {
@@ -146,7 +153,7 @@ fse.remove(path.resolve(__dirname, repoDir))
   return nodegit.Reference.lookup(repository, "HEAD");
 })
 .then(function(head) {
-  return head.symbolicSetTarget(ourBranch.name(), ourSignature, "");
+  return head.symbolicSetTarget(ourBranch.name(), "");
 })
 
 
@@ -173,13 +180,15 @@ fse.remove(path.resolve(__dirname, repoDir))
 // we need to get a new index as the other one isnt backed to
 // the repository in the usual fashion, and just behaves weirdly
 .then(function() {
-  return repository.openIndex().then(function(index) {
-
-    index.read(1);
-    index.addByPath(fileName);
-    index.write();
-
-    return index.writeTree();
+  return repository.refreshIndex()
+    .then(function(index) {
+      return index.addByPath(fileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
   });
 })
 .then(function(oid) {

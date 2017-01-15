@@ -1,10 +1,8 @@
-const fs = require("fs");
 const path = require("path");
 const utils = require("./utils");
 var _;
 
-var version = require("../../package.json").libgit2.version;
-var libgit2 = require("../input/v" + version + ".json");
+var libgit2 = require("../input/libgit2-docs.json");
 var descriptor = require("../input/descriptor.json");
 var supplement = require("../input/libgit2-supplement.json");
 
@@ -46,8 +44,13 @@ module.exports = function generateJson() {
         !~supplement.remove[groupName].functions.indexOf(fnName);
     });
 
+    // If we've already found some functions for this group lets add the new
+    // ones we found instead of overwriting the old ones
+    if (memo[groupName]) {
+      memo[groupName] = memo[groupName].concat(functionNames);
+    }
     // if we have an empty group then just ignore it
-    if (functionNames.length) {
+    else if (functionNames.length) {
       memo[groupName] = functionNames;
     }
 
@@ -146,7 +149,6 @@ module.exports = function generateJson() {
     if (def.ignore) {
       return;
     }
-
     var dependencies = {};
     var addDependencies = function (prop) {
       if (prop.ignore) {
@@ -156,7 +158,7 @@ module.exports = function generateJson() {
       var type = helpers.normalizeCtype(prop.type || prop.cType).replace("git_", "");
       var dependencyFilename = dependencyLookup[type];
 
-      if (dependencyFilename) {
+      if (dependencyFilename && dependencyFilename !== def.filename) {
         dependencies[dependencyFilename] = dependencyFilename;
       }
 
@@ -220,7 +222,7 @@ module.exports = function generateJson() {
     _.merge(enumerable, _.omit(override, ["values"]));
 
     output.push(enumerable);
-  }).value();
+  });
 
   output = _.sortBy(output, "typeName");
 

@@ -1,7 +1,6 @@
 var assert = require("assert");
 var path = require("path");
 var local = path.join.bind(path, __dirname);
-var Promise = require("nodegit-promise");
 var promisify = require("promisify-node");
 var fse = promisify(require("fs-extra"));
 
@@ -10,21 +9,12 @@ var writeFile = promisify(function(filename, data, callback) {
 });
 
 describe("Index", function() {
+  var IndexUtils = require("../utils/index_setup");
+  var RepoUtils = require("../utils/repository_setup");
   var NodeGit = require("../../");
   var Repository = NodeGit.Repository;
 
   var reposPath = local("../repos/workdir");
-
-  var addFileToIndex = function(repository, fileName) {
-    return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(fileName);
-        index.write();
-
-        return index.writeTree();
-      });
-  };
 
   beforeEach(function() {
     var test = this;
@@ -32,7 +22,7 @@ describe("Index", function() {
     return Repository.open(reposPath)
       .then(function(repo) {
         test.repository = repo;
-        return repo.openIndex();
+        return repo.refreshIndex();
       })
       .then(function(index) {
         test.index = index;
@@ -57,6 +47,8 @@ describe("Index", function() {
       newFile2: "and this will have more content"
     };
     var fileNames = Object.keys(fileContent);
+    var test = this;
+    var addCallbacksCount = 0;
 
     return Promise.all(fileNames.map(function(fileName) {
       return writeFile(
@@ -64,9 +56,18 @@ describe("Index", function() {
         fileContent[fileName]);
     }))
     .then(function() {
-      return index.addAll();
+      return index.addAll(undefined, undefined, function() {
+        addCallbacksCount++;
+        // ensure that there is no deadlock if we call
+        // a sync libgit2 function from the callback
+        test.repository.path();
+
+        return 0; // confirm add
+      });
     })
     .then(function() {
+      assert.equal(addCallbacksCount, 2);
+
       var newFiles = index.entries().filter(function(entry) {
         return ~fileNames.indexOf(entry.path);
       });
@@ -79,7 +80,7 @@ describe("Index", function() {
       }));
     })
     .then(function() {
-      index.clear();
+      return index.clear();
     });
   });
 
@@ -92,6 +93,7 @@ describe("Index", function() {
       differentFileName: "this has a different name and shouldn't be deleted"
     };
     var fileNames = Object.keys(fileContent);
+    var removeCallbacksCount = 0;
 
     return Promise.all(fileNames.map(function(fileName) {
       return writeFile(
@@ -108,9 +110,15 @@ describe("Index", function() {
 
       assert.equal(newFiles.length, 3);
 
-      return index.removeAll("newFile*");
+      return index.removeAll("newFile*", function() {
+        removeCallbacksCount++;
+
+        return 0; // confirm remove
+      });
     })
     .then(function() {
+      assert.equal(removeCallbacksCount, 2);
+
       var newFiles = index.entries().filter(function(entry) {
         return ~fileNames.indexOf(entry.path);
       });
@@ -123,7 +131,7 @@ describe("Index", function() {
       }));
     })
     .then(function() {
-      index.clear();
+      return index.clear();
     });
   });
 
@@ -135,6 +143,7 @@ describe("Index", function() {
       newFile2: "and this will have more content"
     };
     var fileNames = Object.keys(fileContent);
+    var updateCallbacksCount = 0;
 
     return Promise.all(fileNames.map(function(fileName) {
       return writeFile(
@@ -154,9 +163,15 @@ describe("Index", function() {
       return fse.remove(path.join(repo.workdir(), fileNames[0]));
     })
     .then(function() {
-      return index.updateAll("newFile*");
+      return index.updateAll("newFile*", function() {
+        updateCallbacksCount++;
+
+        return 0; // confirm update
+      });
     })
     .then(function() {
+      assert.equal(updateCallbacksCount, 1);
+
       var newFiles = index.entries().filter(function(entry) {
         return ~fileNames.indexOf(entry.path);
       });
@@ -193,7 +208,7 @@ describe("Index", function() {
         baseFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -222,7 +237,7 @@ describe("Index", function() {
           baseFileContent + theirFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -239,7 +254,7 @@ describe("Index", function() {
           baseFileContent + ourFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -290,6 +305,58 @@ describe("Index", function() {
           }));
 
         return Promise.all(promises);
+      });
+  });
+
+  it("can add a conflict to the index", function() {
+    var repo;
+    var repoPath = local("../repos/index");
+    var ourBranchName = "ours";
+    var theirBranchName = "theirs";
+    var fileName = "testFile.txt";
+    var ancestorIndexEntry;
+    var ourIndexEntry;
+    var theirIndexEntry;
+
+    return RepoUtils.createRepository(repoPath)
+      .then(function(_repo) {
+        repo = _repo;
+        return IndexUtils.createConflict(
+          repo,
+          ourBranchName,
+          theirBranchName,
+          fileName
+        );
+      })
+      .then(function(index) {
+        assert.ok(index.hasConflicts());
+        return index.conflictGet(fileName);
+      })
+      .then(function(indexEntries) {
+        // Store all indexEntries for conflict
+        ancestorIndexEntry = indexEntries.ancestor_out;
+        ourIndexEntry = indexEntries.our_out;
+        theirIndexEntry = indexEntries.their_out;
+
+        // Stage conflicted file
+        return RepoUtils.addFileToIndex(repo, fileName);
+      })
+      .then(function() {
+        return repo.index();
+      })
+      .then(function(index) {
+        assert.ok(!index.hasConflicts());
+        return index.conflictAdd(
+          ancestorIndexEntry,
+          ourIndexEntry,
+          theirIndexEntry
+        );
+      })
+      .then(function() {
+        return repo.index();
+      })
+      .then(function(index) {
+        assert(index.hasConflicts());
       });
   });
 });

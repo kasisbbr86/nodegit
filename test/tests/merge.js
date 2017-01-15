@@ -1,6 +1,5 @@
 var assert = require("assert");
 var path = require("path");
-var Promise = require("nodegit-promise");
 var promisify = require("promisify-node");
 var fse = promisify(require("fs-extra"));
 var local = path.join.bind(path, __dirname);
@@ -9,6 +8,7 @@ fse.ensureDir = promisify(fse.ensureDir);
 
 describe("Merge", function() {
   var NodeGit = require("../../");
+  var RepoUtils = require("../utils/repository_setup");
 
   var reposPath = local("../repos/merge");
   var ourBranchName = "ours";
@@ -16,13 +16,7 @@ describe("Merge", function() {
 
   beforeEach(function() {
     var test = this;
-    return fse.remove(reposPath)
-      .then(function() {
-        return fse.ensureDir(reposPath);
-      })
-      .then(function() {
-        return NodeGit.Repository.init(reposPath, 0);
-      })
+    return RepoUtils.createRepository(reposPath)
       .then(function(repo) {
         test.repository = repo;
       });
@@ -50,12 +44,14 @@ describe("Merge", function() {
         ourFileContent)
       // Load up the repository index and make our initial commit to HEAD
       .then(function() {
-        return repository.openIndex()
-          .then(function(index) {
-            index.read(1);
-            index.addByPath(ourFileName);
-            index.write();
-
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(ourFileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
             return index.writeTree();
           });
       })
@@ -86,12 +82,14 @@ describe("Merge", function() {
           theirFileContent);
       })
       .then(function() {
-        return repository.openIndex()
-          .then(function(index) {
-            index.read(1);
-            index.addByPath(theirFileName);
-            index.write();
-
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(theirFileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
             return index.writeTree();
           });
       })
@@ -115,7 +113,6 @@ describe("Merge", function() {
       })
       .then(function(index) {
         assert(!index.hasConflicts());
-        index.write();
         return index.writeTreeTo(repository);
       })
       .then(function(oid) {
@@ -155,14 +152,16 @@ describe("Merge", function() {
       ourFileContent)
     // Load up the repository index and make our initial commit to HEAD
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(ourFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(ourFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -191,14 +190,16 @@ describe("Merge", function() {
       theirFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(theirFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(theirFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -267,14 +268,16 @@ describe("Merge", function() {
       ourFileContent)
     // Load up the repository index and make our initial commit to HEAD
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(ourFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(ourFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -303,14 +306,16 @@ describe("Merge", function() {
       theirFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(theirFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(theirFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -328,7 +333,10 @@ describe("Merge", function() {
       });
     })
     .then(function() {
-      var opts = {checkoutStrategy: NodeGit.Checkout.STRATEGY.FORCE};
+      var opts = {
+        checkoutStrategy: NodeGit.Checkout.STRATEGY.SAFE |
+          NodeGit.Checkout.STRATEGY.RECREATE_MISSING
+      };
       return repository.checkoutBranch(ourBranchName, opts);
     })
     .then(function() {
@@ -383,14 +391,16 @@ describe("Merge", function() {
       initialFileContent)
     // Load up the repository index and make our initial commit to HEAD
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(initialFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(initialFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -421,14 +431,16 @@ describe("Merge", function() {
       ourFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(ourFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(ourFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -450,14 +462,16 @@ describe("Merge", function() {
       theirFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(theirFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(theirFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -522,14 +536,16 @@ describe("Merge", function() {
       ourFileContent)
     // Load up the repository index and make our initial commit to HEAD
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(ourFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(ourFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -558,14 +574,16 @@ describe("Merge", function() {
       theirFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(theirFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(theirFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -638,14 +656,16 @@ describe("Merge", function() {
       initialFileContent)
     // Load up the repository index and make our initial commit to HEAD
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(initialFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(initialFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -676,14 +696,16 @@ describe("Merge", function() {
       ourFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(ourFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(ourFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -705,14 +727,16 @@ describe("Merge", function() {
       theirFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(theirFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(theirFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -779,14 +803,16 @@ describe("Merge", function() {
       initialFileContent)
     // Load up the repository index and make our initial commit to HEAD
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(initialFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(initialFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -817,14 +843,16 @@ describe("Merge", function() {
       ourFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(ourFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(ourFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function() {
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -846,14 +874,16 @@ describe("Merge", function() {
       theirFileContent);
     })
     .then(function() {
-      return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(theirFileName);
-        index.write();
-
-        return index.writeTree();
-      });
+      return repository.refreshIndex();
+    })
+    .then(function(index) {
+      return index.addByPath(theirFileName)
+        .then(function() {
+          return index.write();
+        })
+        .then(function(){
+          return index.writeTree();
+        });
     })
     .then(function(oid) {
       assert.equal(oid.toString(),
@@ -906,12 +936,14 @@ describe("Merge", function() {
     return fse.writeFile(path.join(repository.workdir(), fileName),
       baseFileContent)
       .then(function() {
-        return repository.openIndex()
-          .then(function(index) {
-            index.read(1);
-            index.addByPath(fileName);
-            index.write();
-
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
             return index.writeTree();
           });
       })
@@ -948,13 +980,16 @@ describe("Merge", function() {
           ourFileContent);
       })
       .then(function() {
-        return repository.openIndex().then(function(index) {
-          index.read(1);
-          index.addByPath(fileName);
-          index.write();
-
-          return index.writeTree();
-        });
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
+            return index.writeTree();
+          });
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -976,13 +1011,16 @@ describe("Merge", function() {
           theirFileContent);
       })
       .then(function() {
-        return repository.openIndex().then(function(index) {
-          index.read(1);
-          index.addByPath(fileName);
-          index.write();
-
-          return index.writeTree();
-        });
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
+            return index.writeTree();
+          });
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -1002,7 +1040,7 @@ describe("Merge", function() {
       .then(function() {
         return NodeGit.Reference.lookup(repository, "HEAD")
           .then(function(head) {
-            return head.symbolicSetTarget(ourBranch.name(), ourSignature, "");
+            return head.symbolicSetTarget(ourBranch.name(), "");
           });
       })
       .then(function() {
@@ -1014,13 +1052,16 @@ describe("Merge", function() {
           finalFileContent);
       })
       .then(function() {
-        return repository.openIndex().then(function(index) {
-          index.read(1);
-          index.addByPath(fileName);
-          index.write();
-
-          return index.writeTree();
-        });
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
+            return index.writeTree();
+          });
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -1075,13 +1116,16 @@ describe("Merge", function() {
     return fse.writeFile(path.join(repository.workdir(), fileName),
       baseFileContent)
       .then(function() {
-        return repository.openIndex().then(function(index) {
-          index.read(1);
-          index.addByPath(fileName);
-          index.write();
-
-          return index.writeTree();
-        });
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
+            return index.writeTree();
+          });
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -1110,13 +1154,16 @@ describe("Merge", function() {
           baseFileContent + theirFileContent);
       })
       .then(function() {
-        return repository.openIndex().then(function(index) {
-          index.read(1);
-          index.addByPath(fileName);
-          index.write();
-
-          return index.writeTree();
-        });
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
+            return index.writeTree();
+          });
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -1133,13 +1180,16 @@ describe("Merge", function() {
           baseFileContent + ourFileContent);
       })
       .then(function() {
-        return repository.openIndex().then(function(index) {
-          index.read(1);
-          index.addByPath(fileName);
-          index.write();
-
-          return index.writeTree();
-        });
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
+            return index.writeTree();
+          });
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -1180,6 +1230,8 @@ describe("Merge", function() {
 
         assert.equal(repository.state(),
           NodeGit.Repository.STATE.MERGE);
+        // verify the convenience method
+        assert.ok(repository.isMerging());
 
         assert.ok(fse.existsSync(path.join(repoGitPath, "MERGE_HEAD")));
         assert.ok(fse.existsSync(path.join(repoGitPath, "MERGE_MSG")));
@@ -1200,12 +1252,14 @@ describe("Merge", function() {
           conflictSolvedFileContent);
       })
       .then(function() {
-        return repository.openIndex()
-          .then(function(index) {
-            index.read(1);
-            index.addByPath(fileName);
-            index.write();
-
+        return repository.refreshIndex();
+      })
+      .then(function(index) {
+        return index.addByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
             return index.writeTree();
           });
       })
@@ -1240,6 +1294,8 @@ describe("Merge", function() {
 
         assert.equal(repository.state(),
           NodeGit.Repository.STATE.NONE);
+        // verify the convenience method
+        assert.ok(repository.isDefaultState());
       });
   });
 });

@@ -1,7 +1,8 @@
 var assert = require("assert");
 var path = require("path");
-var Promise = require("nodegit-promise");
 var local = path.join.bind(path, __dirname);
+
+var garbageCollect = require("../utils/garbage_collect.js");
 
 describe("Remote", function() {
   var NodeGit = require("../../");
@@ -11,19 +12,20 @@ describe("Remote", function() {
   var reposPath = local("../repos/workdir");
   var url = "https://github.com/nodegit/test";
   var url2 = "https://github.com/nodegit/test2";
+  var privateUrl = "git@github.com:nodegit/private";
 
-  function removeOrigins(repo) {
+  function removeNonOrigins(repo) {
     return repo.getRemotes()
       .then(function(remotes) {
-        var promises = [];
-
-        remotes.forEach(function(remote) {
+        return remotes.reduce(function(promise, remote) {
           if (remote !== "origin") {
-            promises.push(Remote.delete(repo, remote));
+            promise = promise.then(function() {
+              return Remote.delete(repo, remote);
+            });
           }
-        });
 
-        return Promise.all(promises);
+          return promise;
+        }, Promise.resolve());
       });
   }
 
@@ -39,12 +41,12 @@ describe("Remote", function() {
       .then(function(remote) {
         test.remote = remote;
 
-        return removeOrigins(test.repository);
+        return removeNonOrigins(test.repository);
       });
   });
 
   after(function() {
-    return removeOrigins(this.repository);
+    return removeNonOrigins(this.repository);
   });
 
   it("can load a remote", function() {
@@ -52,7 +54,7 @@ describe("Remote", function() {
   });
 
   it("can read the remote url", function() {
-    assert.equal( this.remote.url().replace(".git", ""), url);
+    assert.equal(this.remote.url().replace(".git", ""), url);
   });
 
   it("has an empty pushurl by default", function() {
@@ -61,10 +63,17 @@ describe("Remote", function() {
 
   it("can set a remote", function() {
     var repository = this.repository;
-    var remote = Remote.create(repository, "origin1", url);
 
-    remote.setPushurl("https://google.com/");
-    assert(remote.pushurl(), "https://google.com/");
+    return Remote.create(repository, "origin1", url)
+      .then(function() {
+        return Remote.setPushurl(repository, "origin1", "https://google.com/");
+      })
+      .then(function() {
+        return Remote.lookup(repository, "origin1");
+      })
+      .then(function(remote) {
+        assert.equal(remote.pushurl(), "https://google.com/");
+      });
   });
 
   it("can read the remote name", function() {
@@ -73,36 +82,43 @@ describe("Remote", function() {
 
   it("can create and load a new remote", function() {
     var repository = this.repository;
-    var remote = Remote.create(repository, "origin2", url);
 
-    return Remote.lookup(repository, "origin2").then(function() {
-      assert(remote.url(), url);
-    });
+    return Remote.create(repository, "origin2", url)
+      .then(function() {
+        return Remote.lookup(repository, "origin2");
+      })
+      .then(function(remote) {
+        assert(remote.url(), url);
+      });
   });
 
   it("can delete a remote", function() {
     var repository = this.repository;
-    Remote.create(repository, "origin3", url);
 
-    return Remote.delete(repository, "origin3")
+    return Remote.create(repository, "origin3", url)
       .then(function() {
-        return Remote.lookup(repository, "origin3");
+        return Remote.delete(repository, "origin3");
       })
-      .then(Promise.reject, Promise.resolve);
+      .then(function() {
+        return Remote.lookup(repository, "origin3")
+          // We only want to catch the failed lookup
+          .then(Promise.reject.bind(Promise), Promise.resolve.bind(Promise));
+      });
   });
 
   it("can download from a remote", function() {
     var repo = this.repository;
+    var remoteCallbacks;
 
     return repo.getRemote("origin")
       .then(function(remote) {
-        remote.setCallbacks({
+        remoteCallbacks = {
           certificateCheck: function() {
             return 1;
           }
-        });
+        };
 
-        return remote.connect(NodeGit.Enums.DIRECTION.FETCH)
+        return remote.connect(NodeGit.Enums.DIRECTION.FETCH, remoteCallbacks)
         .then(function() {
           return remote.download(null);
         }).then(function() {
@@ -118,24 +134,24 @@ describe("Remote", function() {
     var repo = this.repository;
     var wasCalled = false;
 
-    Remote.create(repo, "test2", url2);
-
-    return repo.getRemote("test2")
+    return Remote.create(repo, "test2", url2)
       .then(function(remote) {
-        remote.setCallbacks({
-          credentials: function(url, userName) {
-            return NodeGit.Cred.sshKeyFromAgent(userName);
-          },
-          certificateCheck: function() {
-            return 1;
-          },
+        var fetchOpts = {
+          callbacks: {
+            credentials: function(url, userName) {
+              return NodeGit.Cred.sshKeyFromAgent(userName);
+            },
+            certificateCheck: function() {
+              return 1;
+            },
 
-          transferProgress: function() {
-            wasCalled = true;
+            transferProgress: function() {
+              wasCalled = true;
+            }
           }
-        });
+        };
 
-        return remote.fetch(null, repo.defaultSignature(), null);
+        return remote.fetch(null, fetchOpts, null);
       })
       .then(function() {
         assert.ok(wasCalled);
@@ -144,58 +160,221 @@ describe("Remote", function() {
       });
   });
 
+  it("can get the default branch of a remote", function() {
+    var remoteCallbacks = {
+      certificateCheck: function() {
+        return 1;
+      }
+    };
+
+    var remote = this.remote;
+
+    return remote.connect(NodeGit.Enums.DIRECTION.FETCH, remoteCallbacks)
+      .then(function() { return remote.defaultBranch(); })
+      .then(function(branchName) {
+        assert.equal("refs/heads/master", branchName);
+      });
+  });
+
   it("can fetch from a remote", function() {
     return this.repository.fetch("origin", {
-      credentials: function(url, userName) {
-        return NodeGit.Cred.sshKeyFromAgent(userName);
-      },
-      certificateCheck: function() {
-        return 1;
+      callbacks: {
+        credentials: function(url, userName) {
+          return NodeGit.Cred.sshKeyFromAgent(userName);
+        },
+        certificateCheck: function() {
+          return 1;
+        }
       }
     });
   });
 
-  it("can fetch from all remotes", function() {
-    // Set a reasonable timeout here for the fetchAll test
-    this.timeout(15000);
-
-    return this.repository.fetchAll({
-      credentials: function(url, userName) {
-        return NodeGit.Cred.sshKeyFromAgent(userName);
-      },
-      certificateCheck: function() {
-        return 1;
-      }
-    });
-  });
-
-  it("cannot push to a repository", function() {
-    this.timeout(5000);
+  it("can fetch from a private repository", function() {
     var repo = this.repository;
-    var branch = "should-not-exist";
-    return Remote.lookup(repo, "origin")
+    var fetchOptions = {
+      callbacks: {
+        credentials: function(url, userName) {
+          return NodeGit.Cred.sshKeyNew(
+            userName,
+            path.resolve("./test/nodegit-test-rsa.pub"),
+            path.resolve("./test/nodegit-test-rsa"),
+            ""
+          );
+        },
+        certificateCheck: function() {
+          return 1;
+        }
+      }
+    };
+
+    return Remote.create(repo, "private", privateUrl)
       .then(function(remote) {
-        remote.setCallbacks({
+        return remote.fetch(null, fetchOptions, "Fetch from private");
+      })
+      .catch(function() {
+        assert.fail("Unable to fetch from private repository");
+      });
+  });
+
+  it("can reject fetching from private repository without valid credentials",
+    function() {
+      var repo = this.repository;
+      var firstPass = true;
+      var fetchOptions = {
+        callbacks: {
           credentials: function(url, userName) {
-            if (url.indexOf("https") === -1) {
+            if (firstPass) {
+              firstPass = false;
               return NodeGit.Cred.sshKeyFromAgent(userName);
-            } else {
-              return NodeGit.Cred.userpassPlaintextNew(userName, "");
             }
           },
           certificateCheck: function() {
             return 1;
           }
+        }
+      };
+
+      return Remote.create(repo, "private", privateUrl)
+        .then(function(remote) {
+          return remote.fetch(null, fetchOptions, "Fetch from private");
+        })
+        .then(function () {
+          assert.fail("Should not be able to fetch from repository");
+        })
+        .catch(function(error) {
+          assert.equal(
+            error.message.trim(),
+             "ERROR: Repository not found.",
+             "Should not be able to find repository."
+          );
         });
-        return remote;
+  });
+
+  it("can fetch from all remotes", function() {
+    var repository = this.repository;
+
+    return Remote.create(repository, "test1", url)
+      .then(function() {
+        return Remote.create(repository, "test2", url2);
+      })
+      .then(function() {
+        return repository.fetchAll({
+          callbacks: {
+            credentials: function(url, userName) {
+              return NodeGit.Cred.sshKeyFromAgent(userName);
+            },
+            certificateCheck: function() {
+              return 1;
+            }
+          }
+        });
+      });
+  });
+
+  it("will reject if credentials promise rejects", function() {
+    var repo = this.repository;
+    var branch = "should-not-exist";
+    return Remote.lookup(repo, "origin")
+      .then(function(remote) {
+        var ref = "refs/heads/" + branch;
+        var refs = [ref + ":" + ref];
+        var options = {
+          callbacks: {
+            credentials: function(url, userName) {
+              var test = Promise.resolve("test")
+                .then(function() { return; })
+                .then(function() { return; })
+                .then(function() { return; })
+                .then(function() {
+                  return Promise.reject(new Error("failure case"));
+                });
+              return test;
+            },
+            certificateCheck: function() {
+              return 1;
+            }
+          }
+        };
+        return remote.push(refs, options);
+      })
+      .then(function() {
+        return Promise.reject(
+          new Error("should not be able to push to the repository"));
+      }, function(err) {
+        if (err.message === "failure case")
+        {
+          return Promise.resolve();
+        } else {
+          throw err;
+        }
+      })
+      .then(function() {
+        return Remote.lookup(repo, "origin");
       })
       .then(function(remote) {
         var ref = "refs/heads/" + branch;
         var refs = [ref + ":" + ref];
-        var signature = repo.defaultSignature();
-        return remote.push(refs, null, signature,
-          "Pushed '" + branch + "' for test");
+        var options = {
+          callbacks: {
+            credentials: function(url, userName) {
+              var test = Promise.resolve()
+                .then(Promise.resolve.bind(Promise))
+                .then(Promise.resolve.bind(Promise))
+                .then(Promise.resolve.bind(Promise))
+                .then(Promise.reject.bind(Promise));
+              return test;
+            },
+            certificateCheck: function() {
+              return 1;
+            }
+          }
+        };
+        return remote.push(refs, options);
       })
+      .then(function() {
+        return Promise.reject(
+          new Error("should not be able to push to the repository"));
+      }, function(err) {
+        if (err.message === "Method push has thrown an error.")
+        {
+          return Promise.resolve();
+        } else {
+          throw err;
+        }
+      });
+  });
+
+  it("cannot push to a repository with invalid credentials", function() {
+    var repo = this.repository;
+    var branch = "should-not-exist";
+    return Remote.lookup(repo, "origin")
+      .then(function(remote) {
+        var ref = "refs/heads/" + branch;
+        var refs = [ref + ":" + ref];
+        var firstPass = true;
+        var options = {
+          callbacks: {
+            credentials: function(url, userName) {
+              if (firstPass) {
+                firstPass = false;
+                if (url.indexOf("https") === -1) {
+                  return NodeGit.Cred.sshKeyFromAgent(userName);
+                } else {
+                  return NodeGit.Cred.userpassPlaintextNew(userName, "");
+                }
+              } else {
+                return Promise.reject();
+              }
+            },
+            certificateCheck: function() {
+              return 1;
+            }
+          }
+        };
+        return remote.push(refs, options);
+      })
+      // takes care of windows bug, see the .catch for the proper pathway
+      // that this flow should take (cred cb doesn't run twice -> throws error)
       .then(function() {
         return Promise.reject(
           new Error("should not be able to push to the repository"));
@@ -205,6 +384,61 @@ describe("Remote", function() {
         } else {
           return Promise.resolve();
         }
+      })
+      // catches linux / osx failure to use anonymous credentials
+      // stops callback infinite loop
+      .catch(function (reason) {
+        if (reason.message !==
+          "Method push has thrown an error.")
+        {
+          throw reason;
+        } else {
+          return Promise.resolve();
+        }
+      });
+  });
+
+  it("is kept alive by refspec", function() {
+    var repo = this.repository;
+    var Remote = NodeGit.Remote;
+
+    garbageCollect();
+    var startSelfFreeingCount = Remote.getSelfFreeingInstanceCount();
+    var startNonSelfFreeingCount = Remote.getNonSelfFreeingConstructedCount();
+
+    var resolve;
+    var promise = new Promise(function(_resolve) { resolve = _resolve; });
+
+    var remote;
+
+    repo.getRemote("origin")
+      .then(function(_remote) {
+        remote = _remote;
+        setTimeout(resolve, 0);
+      });
+
+    return promise
+      .then(function() {
+        // make sure we have created one self-freeing remote
+        assert.equal(startSelfFreeingCount + 1,
+          Remote.getSelfFreeingInstanceCount());
+        assert.equal(startNonSelfFreeingCount,
+          Remote.getNonSelfFreeingConstructedCount());
+        var refspec = remote.getRefspec(0);
+        assert.equal("refs/heads/*", refspec.src());
+        remote = null;
+        garbageCollect();
+        // the refspec should be holding on to the remote
+        assert.equal(startSelfFreeingCount + 1,
+          Remote.getSelfFreeingInstanceCount());
+
+        assert.equal("refs/heads/*", refspec.src());
+
+        refspec = null;
+        garbageCollect();
+        // the remote should be freed now
+        assert.equal(startSelfFreeingCount,
+          Remote.getSelfFreeingInstanceCount());
       });
   });
 });

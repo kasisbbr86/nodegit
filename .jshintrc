@@ -2,6 +2,7 @@
   "boss": true,
   "curly": true,
   "eqnull": true,
+  "esnext": true,
   "evil": true,
   "futurehostile": true,
   "globals": {
@@ -18,7 +19,8 @@
   "maxlen": 80,
   "node": true,
   "predef": [
-    "-Promise"
+    "Promise",
+    "Set"
   ],
   "proto": true,
   "quotmark": "double",

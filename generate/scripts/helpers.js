@@ -1,14 +1,14 @@
-
 var callbackTypePattern = /\s*_cb/;
 
 var utils = require("./utils");
 var _ = require("lodash");
+var path = require("path");
+var fs = require("fs");
 
 // TODO: When libgit2's docs include callbacks we should be able to remove this
-var version = require("../../package.json").libgit2.version;
 var callbackDefs = require("../input/callbacks.json");
 var descriptor = require("../input/descriptor.json");
-var libgit2 = require("../input/v" + version + ".json");
+var libgit2 = require("../input/libgit2-docs.json");
 
 var cTypes = libgit2.groups.map(function(group) { return group[0];});
 
@@ -108,8 +108,9 @@ var Helpers = {
   processCallback: function(field) {
     field.isCallbackFunction = true;
 
-    if (callbackDefs[field.type]) {
-      _.merge(field, callbackDefs[field.type]);
+    var callbackDef = callbackDefs[field.type] || callbackDefs[field.cType];
+    if (callbackDef) {
+      _.merge(field, callbackDef);
     }
     else {
       if (process.env.BUILD_ONLY) {
@@ -141,6 +142,7 @@ var Helpers = {
     }
   },
 
+  // returns the libgittype found in types
   decorateLibgitType: function(type, types, enums) {
     var normalizedType = Helpers.normalizeCtype(type.cType);
     var libgitType = Helpers.getLibgitType(normalizedType, types);
@@ -162,6 +164,8 @@ var Helpers = {
       // we don't want to overwrite the c type of the passed in type
       _.merge(type, descriptor.types[normalizedType.replace("git_", "")] || {}, { cType: type.cType });
     }
+
+    return libgitType;
   },
 
   decoratePrimaryType: function(typeDef, enums) {
@@ -174,6 +178,13 @@ var Helpers = {
     typeDef.filename = typeDef.typeName;
     typeDef.isLibgitType = true;
     typeDef.dependencies = [];
+    typeDef.selfFreeing = Boolean(typeDefOverrides.selfFreeing);
+
+    if (typeDefOverrides.freeFunctionName) {
+      typeDef.freeFunctionName = typeDefOverrides.freeFunctionName;
+    } else if (typeDef.type === 'struct') {
+      typeDef.freeFunctionName = 'free';
+    }
 
     typeDef.fields = typeDef.fields || [];
     typeDef.fields.forEach(function (field, index, allFields) {
@@ -209,6 +220,7 @@ var Helpers = {
     field.jsFunctionName = utils.camelCase(field.name);
     field.cppClassName = Helpers.cTypeToCppName(field.type);
     field.jsClassName = utils.titleCase(Helpers.cTypeToJsName(field.type));
+    field.ownedByThis = true;
 
     if (Helpers.isCallbackFunction(field.cType)) {
       Helpers.processCallback(field);
@@ -232,7 +244,7 @@ var Helpers = {
   },
 
   decorateArg: function(arg, allArgs, typeDef, fnDef, argOverrides, enums) {
-    var type = arg.cType || arg.type;
+    var type = argOverrides.cType || argOverrides.type || arg.cType || arg.type;
     var normalizedType = Helpers.normalizeCtype(type);
 
     arg.cType = type;
@@ -261,8 +273,13 @@ var Helpers = {
       // itself and determine if this function goes on the prototype
       // or is a constructor method.
       arg.isReturn = arg.name === "out" || (utils.isDoublePointer(arg.type) && normalizedType == typeDef.cType);
-      arg.isSelf = utils.isPointer(arg.type) && normalizedType == typeDef.cType;
-
+      if (typeof arg.isSelf == 'undefined') {
+        arg.isSelf = utils.isPointer(arg.type) &&
+          normalizedType == typeDef.cType &&
+          arg.cppClassName !== "Array" &&
+          argOverrides.cppClassName !== "Array" &&
+          _.every(allArgs, function(_arg) { return !_arg.isSelf; });
+      }
       if (arg.isReturn && fnDef.return && fnDef.return.type === "int") {
         fnDef.return.isErrorCode = true;
         fnDef.isAsync = true;
@@ -288,13 +305,10 @@ var Helpers = {
     // available
     if (key == typeDef.cType + "_free") {
       typeDef.freeFunctionName = key;
-      //fnDef.ignore = true;
-      //return;
     }
 
     fnDef.cppFunctionName = Helpers.cTypeToCppName(key, "git_" + typeDef.typeName);
     fnDef.jsFunctionName = Helpers.cTypeToJsName(key, "git_" + typeDef.typeName);
-    //fnDef.isAsync = false; // until proven otherwise
 
     if (fnDef.cppFunctionName == typeDef.cppClassName) {
       fnDef.cppFunctionName = fnDef.cppFunctionName.replace("Git", "");
@@ -310,6 +324,10 @@ var Helpers = {
       }
     });
 
+    if (fnDef.cFile) {
+      fnDef.implementation = fs.readFileSync(path.resolve(fnDef.cFile), 'utf8');
+    }
+
     if (fnDef.return) {
       Helpers.decorateArg(fnDef.return, fnDef.args, typeDef, fnDef, fnOverrides.return || {}, enums);
     }
@@ -322,7 +340,7 @@ var Helpers = {
       if (fnDef.jsFunctionName == utils.camelCase(collidingName)) {
         fnDef.jsFunctionName = utils.camelCase(newName);
       }
-    }).value();
+    });
 
     if ("git_" + typeDef.typeName == fnDef.cFunctionName) {
       fnDef.useAsOnRootProto = true;

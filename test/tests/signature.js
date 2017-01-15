@@ -1,13 +1,9 @@
 var assert = require("assert");
 var path = require("path");
 var local = path.join.bind(path, __dirname);
-var promisify = require("promisify-node");
-var Promise = require("nodegit-promise");
 
-// Have to wrap exec, since it has a weird callback signature.
-var exec = promisify(function(command, opts, callback) {
-  return require("child_process").exec(command, opts, callback);
-});
+var garbageCollect = require("../utils/garbage_collect.js");
+var exec = require("../../utils/execPromise");
 
 describe("Signature", function() {
   var NodeGit = require("../../");
@@ -87,5 +83,27 @@ describe("Signature", function() {
         return Promise.reject(e);
       });
     });
+  });
+
+  it("duplicates time", function() {
+    garbageCollect();
+    var Time = NodeGit.Time;
+    var startSelfFreeingCount = Time.getSelfFreeingInstanceCount();
+    var startNonSelfFreeingCount =
+      Time.getNonSelfFreeingConstructedCount();
+    var time = Signature.now(name, email).when();
+
+    garbageCollect();
+    var endSelfFreeingCount = Time.getSelfFreeingInstanceCount();
+    var endNonSelfFreeingCount = Time.getNonSelfFreeingConstructedCount();
+    // we should get one duplicated, self-freeing time
+    assert.equal(startSelfFreeingCount + 1, endSelfFreeingCount);
+    assert.equal(startNonSelfFreeingCount, endNonSelfFreeingCount);
+
+    time = null;
+    garbageCollect();
+    endSelfFreeingCount = Time.getSelfFreeingInstanceCount();
+    // the self-freeing time should get freed
+    assert.equal(startSelfFreeingCount, endSelfFreeingCount);
   });
 });

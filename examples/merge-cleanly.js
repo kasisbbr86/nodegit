@@ -43,14 +43,16 @@ fse.remove(path.resolve(__dirname, repoDir))
 
 // Load up the repository index and make our initial commit to HEAD
 .then(function() {
-  return repository.openIndex();
+  return repository.refreshIndex();
 })
 .then(function(index) {
-  index.read(1);
-  index.addByPath(ourFileName);
-  index.write();
-
-  return index.writeTree();
+  return index.addByPath(ourFileName)
+    .then(function() {
+      return index.write();
+    })
+    .then(function() {
+      return index.writeTree();
+    });
 })
 .then(function(oid) {
   return repository.createCommit("HEAD", ourSignature,
@@ -79,14 +81,16 @@ fse.remove(path.resolve(__dirname, repoDir))
   );
 })
 .then(function() {
-  return repository.openIndex();
+  return repository.refreshIndex();
 })
 .then(function(index) {
-  index.read(1);
-  index.addByPath(theirFileName);
-  index.write();
-
-  return index.writeTree();
+  return index.addByPath(theirFileName)
+    .then(function() {
+      return index.write();
+    })
+    .then(function() {
+      return index.writeTree();
+    });
 })
 .then(function(oid) {
   // You don"t have to change head to make a commit to a different branch.
@@ -112,8 +116,10 @@ fse.remove(path.resolve(__dirname, repoDir))
 // the repository instead of just writing it.
 .then(function(index) {
   if (!index.hasConflicts()) {
-    index.write();
-    return index.writeTreeTo(repository);
+    return index.write()
+      .then(function() {
+        return index.writeTreeTo(repository);
+      });
   }
 })
 

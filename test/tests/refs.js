@@ -1,12 +1,8 @@
 var assert = require("assert");
 var path = require("path");
-var promisify = require("promisify-node");
 var local = path.join.bind(path, __dirname);
 
-// Have to wrap exec, since it has a weird callback signature.
-var exec = promisify(function(command, opts, callback) {
-  return require("child_process").exec(command, opts, callback);
-});
+var exec = require("../../utils/execPromise");
 
 describe("Reference", function() {
   var NodeGit = require("../../");
@@ -51,6 +47,19 @@ describe("Reference", function() {
 
   it("can return refName when casting toString", function() {
     assert.equal(this.reference.toString(), refName);
+  });
+
+  it("can compare two identical references", function() {
+    assert.equal(this.reference.cmp(this.reference), 0);
+  });
+
+  it("can compare two different references", function() {
+    var ref = this.reference;
+
+    return this.repository.getReference("checkout-test")
+      .then(function(otherRef) {
+        assert.notEqual(ref.cmp(otherRef), 0);
+      });
   });
 
   it("will return undefined looking up the symbolic target if not symbolic",

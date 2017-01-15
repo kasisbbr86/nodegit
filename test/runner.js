@@ -2,11 +2,17 @@ var promisify = require("promisify-node");
 var fse = promisify("fs-extra");
 var path = require("path");
 var local = path.join.bind(path, __dirname);
+var exec = require('../utils/execPromise');
 
-// Have to wrap exec, since it has a weird callback signature.
-var exec = promisify(function(command, opts, callback) {
-  return require("child_process").exec(command, opts, callback);
-});
+var NodeGit = require('..');
+
+if(process.env.NODEGIT_TEST_THREADSAFETY) {
+  console.log('Enabling thread safety in NodeGit');
+  NodeGit.enableThreadSafety();
+} else if (process.env.NODEGIT_TEST_THREADSAFETY_ASYNC) {
+  console.log('Enabling thread safety for async actions only in NodeGit');
+  NodeGit.setThreadSafetyStatus(NodeGit.THREAD_SAFETY.ENABLED_FOR_ASYNC_ONLY);
+}
 
 var workdirPath = local("repos/workdir");
 
@@ -15,6 +21,9 @@ before(function() {
 
   var url = "https://github.com/nodegit/test";
   return fse.remove(local("repos"))
+    .then(function() {
+      fse.remove(local("home"))
+    })
     .then(function() {
       fse.mkdir(local("repos"));
     })
@@ -39,6 +48,13 @@ before(function() {
     .then(function() {
       return fse.writeFile(local("repos", "nonrepo", "file.txt"),
         "This is a bogus file");
+    })
+    .then(function() {
+      return fse.mkdir(local("home"));
+    })
+    .then(function() {
+      return fse.writeFile(local("home", ".gitconfig"),
+        "[user]\n  name = John Doe\n  email = johndoe@example.com");
     });
 });
 

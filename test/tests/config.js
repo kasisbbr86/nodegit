@@ -1,12 +1,8 @@
 var assert = require("assert");
 var path = require("path");
 var local = path.join.bind(path, __dirname);
-var promisify = require("promisify-node");
 
-// Have to wrap exec, since it has a weird callback signature.
-var exec = promisify(function(command, opts, callback) {
-  return require("child_process").exec(command, opts, callback);
-});
+var exec = require("../../utils/execPromise");
 
 describe("Config", function() {
   var NodeGit = require("../../");
@@ -36,7 +32,25 @@ describe("Config", function() {
       .then(function(userNameFromNodeGit) {
         assert.equal(savedUserName + "-test", userNameFromNodeGit);
       })
-      .then(finallyFn, finallyFn);
+      .then(finallyFn)
+      .catch(function(e) {
+        return finallyFn()
+          .then(function() {
+            throw e;
+          });
+      });
+  });
+
+  it("will reject when getting value of non-existent config key", function() {
+    // Test initially for finding source of a segfault. There was a problem
+    // where getting an empty config value crashes nodegit.
+    return NodeGit.Config.openDefault()
+      .then(function(config) {
+        return config.getString("user.fakevalue");
+      })
+      .catch(function (e) {
+        return true;
+      });
   });
 
   it("can get and set a repo config value", function() {
@@ -70,6 +84,12 @@ describe("Config", function() {
     .then(function(userNameFromNodeGit) {
       assert.equal(savedUserName + "-test", userNameFromNodeGit);
     })
-    .then(finallyFn, finallyFn);
+    .then(finallyFn)
+    .catch(function(e) {
+      return finallyFn()
+        .then(function() {
+          throw e;
+        });
+    });
   });
 });

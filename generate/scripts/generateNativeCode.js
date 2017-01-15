@@ -1,10 +1,7 @@
 const path = require("path");
 const promisify = require("promisify-node");
 const fse = promisify(require("fs-extra"));
-const exec = promisify(function(command, opts, callback) {
-  return require("child_process").exec(command, opts, callback);
-});
-
+const exec = require('../../utils/execPromise');
 const utils = require("./utils");
 
 module.exports = function generateNativeCode() {
@@ -35,7 +32,8 @@ module.exports = function generateNativeCode() {
     fields: utils.readFile("templates/partials/fields.cc"),
     guardArguments: utils.readFile("templates/partials/guard_arguments.cc"),
     syncFunction: utils.readFile("templates/partials/sync_function.cc"),
-    fieldAccessors: utils.readFile("templates/partials/field_accessors.cc")
+    fieldAccessors: utils.readFile("templates/partials/field_accessors.cc"),
+    traits: utils.readFile("templates/partials/traits.h")
   };
 
   var templates = {
@@ -70,6 +68,7 @@ module.exports = function generateNativeCode() {
     returnsCount: require("../templates/filters/returns_count"),
     returnsInfo: require("../templates/filters/returns_info"),
     titleCase: require("../templates/filters/title_case"),
+    toBool: require('../templates/filters/to_bool'),
     unPointer: require("../templates/filters/un_pointer"),
     upper: require("../templates/filters/upper")
   };
@@ -86,7 +85,9 @@ module.exports = function generateNativeCode() {
 
   // Attach all partials to select templates.
   Object.keys(partials).forEach(function(partial) {
+    templates.class_header.registerPartial(partial, combyne(partials[partial]));
     templates.class_content.registerPartial(partial, combyne(partials[partial]));
+    templates.struct_header.registerPartial(partial, combyne(partials[partial]));
     templates.struct_content.registerPartial(partial, combyne(partials[partial]));
   });
 
@@ -102,25 +103,31 @@ module.exports = function generateNativeCode() {
   fse.remove(path.resolve(__dirname, "../../src")).then(function() {
     return fse.remove(path.resolve(__dirname, "../../include"));
   }).then(function() {
-    return fse.copy(path.resolve(__dirname, "../templates/manual/"), path.resolve(__dirname, "../../"));
+    return fse.copy(path.resolve(__dirname, "../templates/manual/include"), path.resolve(__dirname, "../../include"));
+  }).then(function() {
+    return fse.copy(path.resolve(__dirname, "../templates/manual/src"), path.resolve(__dirname, "../../src"));
   }).then(function() {
     // Write out single purpose templates.
-    utils.writeFile("../binding.gyp", beautify(templates.binding.render(enabled)));
-    utils.writeFile("../src/nodegit.cc", templates.nodegitCC.render(enabled));
-    utils.writeFile("../lib/nodegit.js", beautify(templates.nodegitJS.render(enabled)));
+    utils.writeFile("../binding.gyp", beautify(templates.binding.render(enabled)), "binding.gyp");
+    utils.writeFile("../src/nodegit.cc", templates.nodegitCC.render(enabled), "nodegit.cc");
+    utils.writeFile("../lib/nodegit.js", beautify(templates.nodegitJS.render(enabled)), "nodegit.js");
     // Write out all the classes.
     enabled.forEach(function(idef) {
       if (idef.type && idef.type != "enum") {
         utils.writeFile(
-          "../src/" + idef.filename + ".cc", templates[idef.type + "_content"].render(idef)
+          "../src/" + idef.filename + ".cc",
+          templates[idef.type + "_content"].render(idef),
+          idef.type + "_content.cc"
         );
         utils.writeFile(
-          "../include/" + idef.filename + ".h", templates[idef.type + "_header"].render(idef)
+          "../include/" + idef.filename + ".h",
+          templates[idef.type + "_header"].render(idef),
+          idef.type + "_header.h"
         );
       }
     });
 
-    utils.writeFile("../lib/enums.js", beautify(templates.enums.render(enabled)));
+    utils.writeFile("../lib/enums.js", beautify(templates.enums.render(enabled)), "enums.js");
   }).then(function() {
     return exec("command -v astyle").then(function(astyle) {
       if (astyle) {

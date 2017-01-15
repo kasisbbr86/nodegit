@@ -1,8 +1,13 @@
 #ifndef {{ cppClassName|upper }}_H
 #define {{ cppClassName|upper }}_H
-// generated from class_header.h
 #include <nan.h>
 #include <string>
+#include <queue>
+#include <utility>
+
+#include "async_baton.h"
+#include "nodegit_wrapper.h"
+#include "promise_completion.h"
 
 extern "C" {
 #include <git2.h>
@@ -10,6 +15,8 @@ extern "C" {
 #include <{{ dependency }}>
 {%endeach%}
 }
+
+#include "../include/typedefs.h"
 
 {%each dependencies as dependency%}
 #include "{{ dependency }}"
@@ -29,20 +36,23 @@ struct {{ cType }} {
 using namespace node;
 using namespace v8;
 
-class {{ cppClassName }} : public ObjectWrap {
+{%if cType %}
+{%partial traits .%}
+{%endif%}
+
+class {{ cppClassName }} : public
+{%if cType %}
+  NodeGitWrapper<{{ cppClassName }}Traits>
+{%else%}
+  Nan::ObjectWrap
+{%endif%}
+{
+  {%if cType %}
+    // grant full access to base class
+    friend class NodeGitWrapper<{{ cppClassName }}Traits>;
+  {%endif %}
   public:
-
-    static Persistent<Function> constructor_template;
-    static void InitializeComponent (Handle<v8::Object> target);
-
-    {%if cType%}
-    {{ cType }} *GetValue();
-    {{ cType }} **GetRefValue();
-    void ClearValue();
-
-    static Handle<v8::Value> New(void *raw, bool selfFreeing);
-    {%endif%}
-    bool selfFreeing;
+    static void InitializeComponent (Local<v8::Object> target);
 
     {% each functions as function %}
       {% if not function.ignore %}
@@ -58,16 +68,15 @@ class {{ cppClassName }} : public ObjectWrap {
     );
 
     static void {{ function.cppFunctionName }}_{{ arg.name }}_async(uv_async_t* req, int status);
-    static void {{ function.cppFunctionName }}_{{ arg.name }}_asyncPromisePolling(uv_async_t* req, int status);
-    struct {{ function.cppFunctionName }}_{{ arg.name|titleCase }}Baton {
+    static void {{ function.cppFunctionName }}_{{ arg.name }}_promiseCompleted(bool isFulfilled, AsyncBaton *_baton, v8::Local<v8::Value> result);
+    struct {{ function.cppFunctionName }}_{{ arg.name|titleCase }}Baton : public AsyncBatonWithResult<{{ arg.return.type }}> {
       {% each arg.args|argsInfo as cbArg %}
       {{ cbArg.cType }} {{ cbArg.name }};
       {% endeach %}
 
-      uv_async_t req;
-      {{ arg.return.type }} result;
-      Persistent<Object> promise;
-      bool done;
+      {{ function.cppFunctionName }}_{{ arg.name|titleCase }}Baton(const {{ arg.return.type }} &defaultResult)
+        : AsyncBatonWithResult<{{ arg.return.type }}>(defaultResult) {
+        }
     };
           {% endif %}
         {% endeach %}
@@ -76,10 +85,19 @@ class {{ cppClassName }} : public ObjectWrap {
 
 
   private:
-
-
     {%if cType%}
-    {{ cppClassName }}({{ cType }} *raw, bool selfFreeing);
+    {{ cppClassName }}()
+      : NodeGitWrapper<{{ cppClassName }}Traits>(
+        {% if createFunctionName %}
+          "A new {{ cppClassName }} cannot be instantiated. Use {{ jsCreateFunctionName }} instead."
+        {% else %}
+          "A new {{ cppClassName }} cannot be instantiated."
+        {% endif %}
+      )
+    {}
+    {{ cppClassName }}({{ cType }} *raw, bool selfFreeing, Local<v8::Object> owner = Local<v8::Object>())
+      : NodeGitWrapper<{{ cppClassName }}Traits>(raw, selfFreeing, owner)
+    {}
     ~{{ cppClassName }}();
     {%endif%}
 
@@ -87,13 +105,11 @@ class {{ cppClassName }} : public ObjectWrap {
       {% if not function.ignore %}
         {% each function.args as arg %}
           {% if arg.saveArg %}
-    Persistent<Object> {{ function.cppFunctionName }}_{{ arg.name }};
+    Nan::Persistent<Object> {{ function.cppFunctionName }}_{{ arg.name }};
           {% endif %}
         {% endeach %}
       {% endif %}
     {% endeach %}
-
-    static NAN_METHOD(JSNewFunction);
 
     {%each fields as field%}
       {%if not field.ignore%}
@@ -102,29 +118,29 @@ class {{ cppClassName }} : public ObjectWrap {
     {%endeach%}
 
     {%each functions as function%}
-      {%if not function.ignore%}
-        {%if function.isAsync%}
+      {%if not function.ignore %}
+        {%if function.isAsync %}
 
     struct {{ function.cppFunctionName }}Baton {
       int error_code;
       const git_error* error;
       {%each function.args as arg%}
         {%if arg.isReturn%}
-      {{ arg.cType|replace "**" "*" }} {{ arg.name }};
+      {{= arg.cType|replace "**" "*" =}} {{ arg.name }};
         {%else%}
-      {{ arg.cType }} {{ arg.name }};
+      {{= arg.cType =}} {{ arg.name }};
           {%if arg | isOid %}
       bool {{ arg.name }}NeedsFree;
           {%endif%}
         {%endif%}
       {%endeach%}
     };
-    class {{ function.cppFunctionName }}Worker : public NanAsyncWorker {
+    class {{ function.cppFunctionName }}Worker : public Nan::AsyncWorker {
       public:
         {{ function.cppFunctionName }}Worker(
             {{ function.cppFunctionName }}Baton *_baton,
-            NanCallback *callback
-        ) : NanAsyncWorker(callback)
+            Nan::Callback *callback
+        ) : Nan::AsyncWorker(callback)
           , baton(_baton) {};
         ~{{ function.cppFunctionName }}Worker() {};
         void Execute();
@@ -146,7 +162,7 @@ class {{ cppClassName }} : public ObjectWrap {
     struct {{ function.cppFunctionName }}_globalPayload {
           {%each function.args as arg %}
             {%if arg.isCallbackFunction %}
-      NanCallback * {{ arg.name }};
+      Nan::Callback * {{ arg.name }};
             {%endif%}
           {%endeach%}
 
@@ -171,10 +187,6 @@ class {{ cppClassName }} : public ObjectWrap {
         {%endif%}
       {%endeach%}
     {%endeach%}
-
-    {%if cType%}
-    {{ cType }} *raw;
-    {%endif%}
 };
 
 #endif

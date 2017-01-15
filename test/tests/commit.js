@@ -1,13 +1,19 @@
 var assert = require("assert");
 var path = require("path");
-var Promise = require("nodegit-promise");
 var promisify = require("promisify-node");
 var fse = promisify(require("fs-extra"));
+
+var garbageCollect = require("../utils/garbage_collect.js");
+var leakTest = require("../utils/leak_test");
+
 var local = path.join.bind(path, __dirname);
+
+var exec = require("../../utils/execPromise");
 
 describe("Commit", function() {
   var NodeGit = require("../../");
   var Repository = NodeGit.Repository;
+  var Diff = NodeGit.Diff;
 
   var reposPath = local("../repos/workdir");
   var oid = "fce88902e66c72b5b93e75bdb5ae717038b221f6";
@@ -22,6 +28,59 @@ describe("Commit", function() {
       .then(function(commit) {
         test.commit = commit;
       });
+  }
+
+  function commitFile(repo, fileName, fileContent, commitMessage) {
+    var index;
+    var treeOid;
+    var parent;
+
+    return fse.writeFile(path.join(repo.workdir(), fileName), fileContent)
+    .then(function() {
+      return repo.refreshIndex();
+    })
+    .then(function(indexResult) {
+      index = indexResult;
+    })
+    .then(function() {
+      return index.addByPath(fileName);
+    })
+    .then(function() {
+      return index.write();
+    })
+    .then(function() {
+      return index.writeTree();
+    })
+    .then(function(oidResult) {
+      treeOid = oidResult;
+      return NodeGit.Reference.nameToId(repo, "HEAD");
+    })
+    .then(function(head) {
+      return repo.getCommit(head);
+    })
+    .then(function(parentResult) {
+      parent = parentResult;
+      return Promise.all([
+        NodeGit.Signature.create("Foo Bar", "foo@bar.com", 123456789, 60),
+        NodeGit.Signature.create("Foo A Bar", "foo@bar.com", 987654321, 90)
+      ]);
+    })
+    .then(function(signatures) {
+      var author = signatures[0];
+      var committer = signatures[1];
+
+      return repo.createCommit(
+        "HEAD",
+        author,
+        committer,
+        "message",
+        treeOid,
+        [parent]);
+    });
+  }
+
+  function undoCommit() {
+    return exec("git reset --hard HEAD~1", {cwd: reposPath});
   }
 
   beforeEach(function() {
@@ -84,11 +143,10 @@ describe("Commit", function() {
       return fse.writeFile(path.join(repo.workdir(), fileName), fileContent);
     })
     .then(function() {
-      return repo.openIndex();
+      return repo.refreshIndex();
     })
     .then(function(indexResult) {
       index = indexResult;
-      return index.read(1);
     })
     .then(function() {
       return index.addByPath(fileName);
@@ -127,7 +185,10 @@ describe("Commit", function() {
     })
     .then(function(commitId) {
       assert.equal(expectedCommitId, commitId);
-      return reinitialize(test);
+      return undoCommit()
+      .then(function(){
+        return reinitialize(test);
+      });
     }, function(reason) {
       return reinitialize(test)
         .then(function() {
@@ -137,6 +198,184 @@ describe("Commit", function() {
   });
 
 
+  it("can amend commit", function(){
+    var commitToAmendId = "315e77328ef596f3bc065d8ac6dd2c72c09de8a5";
+    var expectedAmendedCommitId = "57836e96555243666ea74ea888310cc7c41d4613";
+    var fileName = "newfile.txt";
+    var fileContent = "hello world";
+    var newFileName = "newerfile.txt";
+    var newFileContent = "goodbye world";
+    var messageEncoding = "US-ASCII";
+    var message = "First commit";
+
+    var repo;
+    var index;
+    var treeOid;
+    var parent;
+    var author;
+    var committer;
+    var amendedCommitId;
+
+    return NodeGit.Repository.open(reposPath)
+    .then(function(repoResult) {
+      repo = repoResult;
+      return fse.writeFile(path.join(repo.workdir(), fileName), fileContent);
+    })
+    .then(function() {
+      return repo.refreshIndex();
+    })
+    .then(function(indexResult) {
+      index = indexResult;
+    })
+    .then(function() {
+      return index.addByPath(fileName);
+    })
+    .then(function() {
+      return index.write();
+    })
+    .then(function() {
+      return index.writeTree();
+    })
+    .then(function(oidResult) {
+      treeOid = oidResult;
+      return NodeGit.Reference.nameToId(repo, "HEAD");
+    })
+    .then(function(head) {
+      return repo.getCommit(head);
+    })
+    .then(function(parentResult) {
+      parent = parentResult;
+      return Promise.all([
+        NodeGit.Signature.create("Foo Bar", "foo@bar.com", 123456789, 60),
+        NodeGit.Signature.create("Foo A Bar", "foo@bar.com", 987654321, 90)
+      ]);
+    })
+    .then(function(signatures) {
+      var author = signatures[0];
+      var committer = signatures[1];
+
+      return repo.createCommit(
+        "HEAD",
+        author,
+        committer,
+        "message",
+        treeOid,
+        [parent]);
+    })
+    .then(function() {
+      return fse.writeFile(
+        path.join(repo.workdir(), newFileName),
+        newFileContent
+      );
+    })
+    .then(function() {
+      return repo.refreshIndex();
+    })
+    .then(function(indexResult) {
+      index = indexResult;
+    })
+    .then(function() {
+      return index.addByPath(newFileName);
+    })
+    .then(function() {
+      return index.write();
+    })
+    .then(function() {
+      return index.writeTree();
+    })
+    .then(function(resultOid){
+      treeOid = resultOid;
+       return Promise.all([
+         repo.getCommit(commitToAmendId),
+         NodeGit.Signature.create(
+           "New Foo Bar",
+           "newfoo@bar.com",
+           246802468,
+           12
+         ),
+         NodeGit.Signature.create(
+           "New Foo A Bar",
+           "newfoo@bar.com",
+           4807891730,
+           32
+         )
+       ]);
+
+    })
+    .then(function(amendInfo){
+      var commit = amendInfo[0];
+      author = amendInfo[1];
+      committer = amendInfo[2];
+      return commit.amend(
+        "HEAD",
+        author,
+        committer,
+        messageEncoding,
+        message,
+        treeOid
+      );
+    })
+    .then(function(commitId){
+      amendedCommitId = commitId;
+      return undoCommit();
+    })
+    .then(function(){
+      assert.equal(amendedCommitId, expectedAmendedCommitId);
+    });
+  });
+
+  it("can amend commit and update reference separately", function() {
+    var customReflogMessage = "updating reference manually";
+
+    var head, repo, oid, originalReflogCount;
+
+    return NodeGit.Repository.open(reposPath)
+    .then(function(repoResult) {
+      repo = repoResult;
+      // grab the original reflog entry count (to make sure .amend
+      // doesn't add a reflog entry when not given a reference)
+      return NodeGit.Reflog.read(repo, "HEAD");
+    })
+    .then(function(reflog) {
+      originalReflogCount = reflog.entrycount();
+      // get the head reference and commit
+      return repo.head();
+    })
+    .then(function(headResult) {
+      head = headResult;
+      return repo.getHeadCommit();
+    })
+    .then(function(headCommit) {
+      // amend the commit but don't update any reference
+      // (passing null as update_ref)
+      return headCommit.amend(
+        null,
+        null,
+        null,
+        "message",
+        null,
+        null);
+    }).then(function(oidResult) {
+      oid = oidResult;
+      // update the reference manually
+      return head.setTarget(oid, customReflogMessage);
+    }).then(function() {
+      // load reflog and make sure the last message is what we expected
+      return NodeGit.Reflog.read(repo, "HEAD");
+    }).then(function(reflog) {
+      var reflogEntry = reflog.entryByIndex(0);
+      assert.equal(
+        reflogEntry.message(),
+        customReflogMessage
+      );
+      assert.equal(
+        reflogEntry.idNew().toString(),
+        oid
+      );
+      // only setTarget should have added to the entrycount
+      assert.equal(reflog.entrycount(), originalReflogCount + 1);
+    });
+  });
 
   it("has an owner", function() {
     var owner = this.commit.owner();
@@ -251,6 +490,102 @@ describe("Commit", function() {
     });
   });
 
+  // it("can get the commit diff in large context", function() {
+    // For displaying the full file we can set context_lines of options.
+    // Eventually this should work, but right now there is a
+    // comment in diff.c in libgit2 of "/* TODO: parse thresholds */"
+    // It will add the "--unified" but not with the "=x" part.
+    // options.context_lines = 20000;
+  // });
+
+  it("can get the commit diff without whitespace", function() {
+    var repo;
+    var options = {};
+    var GIT_DIFF_IGNORE_WHITESPACE = (1 << 22);
+    options.flags = GIT_DIFF_IGNORE_WHITESPACE;
+
+    var fileName = "whitespacetest.txt";
+    var fileContent = "line a\nline b\nline c\nline d\n	line e\nline f\n" +
+                  "line g\nline h\nline i\n		line j\nline k\nline l\n" +
+                  "line m\nline n\n			line o\nline p\nline q\n" +
+                  "line r\nline s\nline t\nline u\nline v\nline w\n" +
+                  "line x\nline y\nline z\n";
+    var changedFileContent = "line a\nline b\n        line c\nline d\n" +
+                  "line e\nline f\nline g\n  line h\nline i\nline j\n" +
+                  "line k\nline l\nline m\nline n\nline o\nlinep\n" +
+                  " line q\nline r\nline   s\nline t\n\nline u\n" +
+                  "line v1\nline w\nline x\n			\nline y\nline z\n";
+
+    return NodeGit.Repository.open(reposPath)
+    .then(function(repoResult) {
+      repo = repoResult;
+      return commitFile(repo, fileName, fileContent, "commit this");
+    })
+    .then(function(){
+      return commitFile(repo, fileName, changedFileContent, "commit that");
+    })
+    .then (function() {
+      return repo.getHeadCommit();
+    })
+    .then (function(wsCommit) {
+      return wsCommit.getDiffWithOptions(options);
+    })
+    .then(function(diff) {
+      assert.equal(diff.length, 1);
+      return diff[0].patches();
+    })
+    .then(function(patches) {
+      assert.equal(patches.length, 1);
+      var patch = patches[0];
+
+      assert.equal(patch.oldFile().path(), fileName);
+      assert.equal(patch.newFile().path(), fileName);
+      assert.ok(patch.isModified());
+
+      return patch.hunks();
+    })
+    .then(function(hunks) {
+      return hunks[0].lines();
+    })
+    .then(function(lines) {
+      //check all hunk lines
+      assert.equal(lines.length, 12);
+      assert.equal(lines[0].origin(), Diff.LINE.CONTEXT);
+
+      assert.equal(lines[1].content().length, 9);
+      assert.equal(lines[1].content(), "line   s\n");
+      assert.equal(lines[1].origin(), Diff.LINE.CONTEXT);
+
+      assert.equal(lines[2].origin(), Diff.LINE.CONTEXT);
+
+      assert.equal(lines[3].content().length, 1);
+      assert.equal(lines[3].content(), "\n");
+      assert.equal(lines[3].origin(), Diff.LINE.ADDITION);
+
+      assert.equal(lines[4].origin(), Diff.LINE.CONTEXT);
+
+      assert.equal(lines[5].content().length, 7);
+      assert.equal(lines[5].content(), "line v\n");
+      assert.equal(lines[5].origin(), Diff.LINE.DELETION);
+
+      assert.equal(lines[6].content().length, 8);
+      assert.equal(lines[6].content(), "line v1\n");
+      assert.equal(lines[6].origin(), Diff.LINE.ADDITION);
+
+      assert.equal(lines[7].origin(), Diff.LINE.CONTEXT);
+
+      assert.equal(lines[8].origin(), Diff.LINE.CONTEXT);
+
+      assert.equal(lines[9].content().length, 4);
+      assert.equal(lines[9].content(), "\t\t\t\n");
+      assert.equal(lines[9].origin(), Diff.LINE.ADDITION);
+
+      assert.equal(lines[10].origin(), Diff.LINE.CONTEXT);
+
+      assert.equal(lines[11].origin(), Diff.LINE.CONTEXT);
+    });
+  });
+
   describe("Commit's Author", function() {
     before(function() {
       this.author = this.commit.author();
@@ -285,5 +620,35 @@ describe("Commit", function() {
     it("has an email", function() {
       assert.equal(this.committer.email(), "mike@panmedia.co.nz");
     });
+  });
+
+  it("does not leak", function() {
+    var test = this;
+
+    return leakTest(NodeGit.Commit, function() {
+        return NodeGit.Commit.lookup(test.repository, oid);
+    });
+  });
+
+  it("duplicates signature", function() {
+    garbageCollect();
+    var Signature = NodeGit.Signature;
+    var startSelfFreeingCount = Signature.getSelfFreeingInstanceCount();
+    var startNonSelfFreeingCount =
+      Signature.getNonSelfFreeingConstructedCount();
+    var signature = this.commit.author();
+
+    garbageCollect();
+    var endSelfFreeingCount = Signature.getSelfFreeingInstanceCount();
+    var endNonSelfFreeingCount = Signature.getNonSelfFreeingConstructedCount();
+    // we should get one duplicated, self-freeing signature
+    assert.equal(startSelfFreeingCount + 1, endSelfFreeingCount);
+    assert.equal(startNonSelfFreeingCount, endNonSelfFreeingCount);
+
+    signature = null;
+    garbageCollect();
+    endSelfFreeingCount = Signature.getSelfFreeingInstanceCount();
+    // the self-freeing signature should get freed
+    assert.equal(startSelfFreeingCount, endSelfFreeingCount);
   });
 });

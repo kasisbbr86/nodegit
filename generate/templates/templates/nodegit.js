@@ -1,4 +1,3 @@
-var Promise = require("nodegit-promise");
 var promisify = require("promisify-node");
 var rawApi;
 
@@ -51,6 +50,14 @@ catch (ex) {
 
   {% endif %}
 {% endeach %}
+
+var _ConvenientPatch = rawApi.ConvenientPatch;
+var _ConvenientPatch_hunks = _ConvenientPatch.prototype.hunks;
+_ConvenientPatch.prototype.hunks = promisify(_ConvenientPatch_hunks);
+
+var _ConvenientHunk = rawApi.ConvenientHunk;
+var _ConvenientHunk_lines = _ConvenientHunk.prototype.lines;
+_ConvenientHunk.prototype.lines = promisify(_ConvenientHunk_lines);
 /* jshint ignore:end */
 
 // Set the exports prototype to the raw API.
@@ -71,11 +78,9 @@ var importExtension = function(name) {
 rawApi.Utils = {};
 require("./utils/lookup_wrapper");
 require("./utils/normalize_options");
+require("./utils/shallow_clone");
 
 // Load up extra types;
-require("./convenient_line");
-require("./convenient_hunk");
-require("./convenient_patch");
 require("./status_file");
 require("./enums.js");
 
@@ -117,6 +122,3 @@ exports.version = require("../package").version;
 
 // Expose Promise implementation.
 exports.Promise = Promise;
-
-// Initialize libgit2.
-exports.Libgit2.init();

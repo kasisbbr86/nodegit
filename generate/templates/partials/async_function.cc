@@ -1,10 +1,9 @@
 
 {%partial doc .%}
 NAN_METHOD({{ cppClassName }}::{{ cppFunctionName }}) {
-  NanScope();
   {%partial guardArguments .%}
-  if (args.Length() == {{args|jsArgsCount}} || !args[{{args|jsArgsCount}}]->IsFunction()) {
-    return NanThrowError("Callback is required and must be a Function.");
+  if (info.Length() == {{args|jsArgsCount}} || !info[{{args|jsArgsCount}}]->IsFunction()) {
+    return Nan::ThrowError("Callback is required and must be a Function.");
   }
 
   {{ cppFunctionName }}Baton* baton = new {{ cppFunctionName }}Baton;
@@ -16,14 +15,19 @@ NAN_METHOD({{ cppClassName }}::{{ cppFunctionName }}) {
     {%if arg.globalPayload %}
   {{ cppFunctionName }}_globalPayload* globalPayload = new {{ cppFunctionName }}_globalPayload;
     {%endif%}
+    {%if arg.cppClassName == "GitBuf" %}
+      baton->{{arg.name}} = ({{ arg.cType }})malloc(sizeof({{ arg.cType|replace '*' '' }}));;
+      baton->{{arg.name}}->ptr = NULL;
+      baton->{{arg.name}}->size = baton->{{arg.name}}->asize = 0;
+    {%endif%}
   {%endeach%}
 
   {%each args|argsInfo as arg %}
     {%if not arg.isReturn %}
       {%if arg.isSelf %}
-  baton->{{ arg.name }} = ObjectWrap::Unwrap<{{ arg.cppClassName }}>(args.This())->GetValue();
+  baton->{{ arg.name }} = Nan::ObjectWrap::Unwrap<{{ arg.cppClassName }}>(info.This())->GetValue();
       {%elsif arg.isCallbackFunction %}
-  if (!args[{{ arg.jsArg }}]->IsFunction()) {
+  if (!info[{{ arg.jsArg }}]->IsFunction()) {
     baton->{{ arg.name }} = NULL;
         {%if arg.payload.globalPayload %}
     globalPayload->{{ arg.name }} = NULL;
@@ -34,9 +38,9 @@ NAN_METHOD({{ cppClassName }}::{{ cppFunctionName }}) {
   else {
     baton->{{ arg.name}} = {{ cppFunctionName }}_{{ arg.name }}_cppCallback;
         {%if arg.payload.globalPayload %}
-    globalPayload->{{ arg.name }} = new NanCallback(args[{{ arg.jsArg }}].As<Function>());
+    globalPayload->{{ arg.name }} = new Nan::Callback(info[{{ arg.jsArg }}].As<Function>());
         {%else%}
-    baton->{{ arg.payload.name }} = new NanCallback(args[{{ arg.jsArg }}].As<Function>());
+    baton->{{ arg.payload.name }} = new Nan::Callback(info[{{ arg.jsArg }}].As<Function>());
         {%endif%}
   }
       {%elsif arg.payloadFor %}
@@ -48,7 +52,7 @@ NAN_METHOD({{ cppClassName }}::{{ cppFunctionName }}) {
         {%if not arg.payloadFor %}
   baton->{{ arg.name }} = from_{{ arg.name }};
           {%if arg | isOid %}
-  baton->{{ arg.name }}NeedsFree = args[{{ arg.jsArg }}]->IsString();
+  baton->{{ arg.name }}NeedsFree = info[{{ arg.jsArg }}]->IsString();
           {%endif%}
         {%endif%}
       {%endif%}
@@ -57,24 +61,33 @@ NAN_METHOD({{ cppClassName }}::{{ cppFunctionName }}) {
     {%endif%}
   {%endeach%}
 
-  NanCallback *callback = new NanCallback(Local<Function>::Cast(args[{{args|jsArgsCount}}]));
+  Nan::Callback *callback = new Nan::Callback(Local<Function>::Cast(info[{{args|jsArgsCount}}]));
   {{ cppFunctionName }}Worker *worker = new {{ cppFunctionName }}Worker(baton, callback);
   {%each args|argsInfo as arg %}
     {%if not arg.isReturn %}
       {%if arg.isSelf %}
-  worker->SaveToPersistent("{{ arg.name }}", args.This());
+  worker->SaveToPersistent("{{ arg.name }}", info.This());
       {%elsif not arg.isCallbackFunction %}
-  if (!args[{{ arg.jsArg }}]->IsUndefined() && !args[{{ arg.jsArg }}]->IsNull())
-    worker->SaveToPersistent("{{ arg.name }}", args[{{ arg.jsArg }}]->ToObject());
+  if (!info[{{ arg.jsArg }}]->IsUndefined() && !info[{{ arg.jsArg }}]->IsNull())
+    worker->SaveToPersistent("{{ arg.name }}", info[{{ arg.jsArg }}]->ToObject());
       {%endif%}
     {%endif%}
   {%endeach%}
 
-  NanAsyncQueueWorker(worker);
-  NanReturnUndefined();
+  AsyncLibgit2QueueWorker(worker);
+  return;
 }
 
 void {{ cppClassName }}::{{ cppFunctionName }}Worker::Execute() {
+  giterr_clear();
+
+  {
+    LockMaster lockMaster(/*asyncAction: */true{%each args|argsInfo as arg %}
+      {%if arg.cType|isPointer%}{%if not arg.cType|isDoublePointer%}
+        ,baton->{{ arg.name }}
+      {%endif%}{%endif%}
+    {%endeach%});
+
   {%if .|hasReturnType %}
   {{ return.cType }} result = {{ cFunctionName }}(
   {%else%}
@@ -88,53 +101,126 @@ void {{ cppClassName }}::{{ cppFunctionName }}Worker::Execute() {
     {%endeach%}
     );
 
-  {%if return.isErrorCode %}
-  baton->error_code = result;
+    {%if return.isResultOrError %}
+    baton->error_code = result;
+    if (result < GIT_OK && giterr_last() != NULL) {
+      baton->error = git_error_dup(giterr_last());
+    }
 
-  if (result != GIT_OK && giterr_last() != NULL) {
-    baton->error = git_error_dup(giterr_last());
+    {%elsif return.isErrorCode %}
+    baton->error_code = result;
+
+    if (result != GIT_OK && giterr_last() != NULL) {
+      baton->error = git_error_dup(giterr_last());
+    }
+
+    {%elsif not return.cType == 'void' %}
+
+    baton->result = result;
+
+    {%endif%}
   }
-
-  {%elsif not return.cType == 'void' %}
-
-  baton->result = result;
-
-  {%endif%}
 }
 
 void {{ cppClassName }}::{{ cppFunctionName }}Worker::HandleOKCallback() {
+  {%if return.isResultOrError %}
+  if (baton->error_code >= GIT_OK) {
+  {%else%}
   if (baton->error_code == GIT_OK) {
-    {%if not .|returnsCount %}
-    Handle<v8::Value> result = NanUndefined();
+  {%endif%}
+    {%if return.isResultOrError %}
+    Local<v8::Value> result = Nan::New<v8::Number>(baton->error_code);
+
+    {%elsif not .|returnsCount %}
+    Local<v8::Value> result = Nan::Undefined();
     {%else%}
-    Handle<v8::Value> to;
+    Local<v8::Value> to;
       {%if .|returnsCount > 1 %}
-    Handle<Object> result = NanNew<Object>();
+    Local<Object> result = Nan::New<Object>();
       {%endif%}
       {%each .|returnsInfo 0 1 as _return %}
         {%partial convertToV8 _return %}
         {%if .|returnsCount > 1 %}
-    result->Set(NanNew<String>("{{ _return.returnNameOrName }}"), to);
+    Nan::Set(result, Nan::New("{{ _return.returnNameOrName }}").ToLocalChecked(), to);
         {%endif%}
       {%endeach%}
       {%if .|returnsCount == 1 %}
-    Handle<v8::Value> result = to;
+    Local<v8::Value> result = to;
       {%endif%}
     {%endif%}
-    Handle<v8::Value> argv[2] = {
-      NanNull(),
+    Local<v8::Value> argv[2] = {
+      Nan::Null(),
       result
     };
     callback->Call(2, argv);
   } else {
     if (baton->error) {
-      Handle<v8::Value> argv[1] = {
-        NanError(baton->error->message)
+      Local<v8::Value> argv[1] = {
+        Nan::Error(baton->error->message)
       };
       callback->Call(1, argv);
       if (baton->error->message)
         free((void *)baton->error->message);
       free((void *)baton->error);
+    } else if (baton->error_code < 0) {
+      std::queue< Local<v8::Value> > workerArguments;
+{%each args|argsInfo as arg %}
+  {%if not arg.isReturn %}
+    {%if not arg.isSelf %}
+      {%if not arg.isCallbackFunction %}
+      workerArguments.push(GetFromPersistent("{{ arg.name }}"));
+      {%endif%}
+    {%endif%}
+  {%endif%}
+{%endeach%}
+      bool callbackFired = false;
+      while(!workerArguments.empty()) {
+        Local<v8::Value> node = workerArguments.front();
+        workerArguments.pop();
+
+        if (
+          !node->IsObject()
+          || node->IsArray()
+          || node->IsBooleanObject()
+          || node->IsDate()
+          || node->IsFunction()
+          || node->IsNumberObject()
+          || node->IsRegExp()
+          || node->IsStringObject()
+        ) {
+          continue;
+        }
+
+        Local<v8::Object> nodeObj = node->ToObject();
+        Local<v8::Value> checkValue = GetPrivate(nodeObj, Nan::New("NodeGitPromiseError").ToLocalChecked());
+
+        if (!checkValue.IsEmpty() && !checkValue->IsNull() && !checkValue->IsUndefined()) {
+          Local<v8::Value> argv[1] = {
+            checkValue->ToObject()
+          };
+          callback->Call(1, argv);
+          callbackFired = true;
+          break;
+        }
+
+        Local<v8::Array> properties = nodeObj->GetPropertyNames();
+        for (unsigned int propIndex = 0; propIndex < properties->Length(); ++propIndex) {
+          Local<v8::String> propName = properties->Get(propIndex)->ToString();
+          Local<v8::Value> nodeToQueue = nodeObj->Get(propName);
+          if (!nodeToQueue->IsUndefined()) {
+            workerArguments.push(nodeToQueue);
+          }
+        }
+      }
+
+      if (!callbackFired) {
+        Local<v8::Object> err = Nan::Error("Method {{ jsFunctionName }} has thrown an error.")->ToObject();
+        err->Set(Nan::New("errno").ToLocalChecked(), Nan::New(baton->error_code));
+        Local<v8::Value> argv[1] = {
+          err
+        };
+        callback->Call(1, argv);
+      }
     } else {
       callback->Call(0, NULL);
     }
@@ -164,7 +250,7 @@ void {{ cppClassName }}::{{ cppFunctionName }}Worker::HandleOKCallback() {
     {%if arg.isCppClassStringOrArray %}
       {%if arg.freeFunctionName %}
   {{ arg.freeFunctionName }}(baton->{{ arg.name }});
-      {%else%}
+      {%elsif not arg.isConst%}
   free((void *)baton->{{ arg.name }});
       {%endif%}
     {%elsif arg | isOid %}
@@ -178,6 +264,10 @@ void {{ cppClassName }}::{{ cppFunctionName }}Worker::HandleOKCallback() {
       {%endif%}
     {%elsif arg.globalPayload %}
   delete ({{ cppFunctionName}}_globalPayload*)baton->{{ arg.name }};
+    {%endif%}
+    {%if arg.cppClassName == "GitBuf" %}
+  git_buf_free(baton->{{ arg.name }});
+  free((void *)baton->{{ arg.name }});
     {%endif%}
   {%endeach%}
 

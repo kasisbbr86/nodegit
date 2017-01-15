@@ -1,22 +1,15 @@
-/node_modules/
-/vendor/libgit2/
-/vendor/libssh2/
-/vendor/http_parser/
 /build/
-/test/coverage/
-/test/repos/
-/test/test/
-/src/
+/coverage/
+/dist/
 /include/
 /lib/enums.js
 /lib/nodegit.js
-/coverage/
-
-
-/vendor/Release
-/vendor/*.vcxproj
-/vendor/*.filters
-/vendor/*.sln
+/node_modules/
+/src/
+/test/coverage/
+/test/home/
+/test/repos/
+/test/test/
 
 /generate/output
 /generate/**/*.json
@@ -29,3 +22,6 @@
 *.log
 .DS_STORE
 .idea
+
+.vscode
+jsconfig.json

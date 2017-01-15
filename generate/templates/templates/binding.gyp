@@ -1,12 +1,10 @@
-# // This is a generated file, modify: generate/templates/binding.gyp.
-
 {
   "targets": [
     {
       "target_name": "nodegit",
 
       "dependencies": [
-        "<(module_root_dir)/vendor/libgit2.gyp:libgit2"
+        "vendor/libgit2.gyp:libgit2"
       ],
 
       "variables": {
@@ -14,10 +12,17 @@
       },
 
       "sources": [
+        "src/lock_master.cc",
         "src/nodegit.cc",
+        "src/init_ssh2.cc",
+        "src/promise_completion.cc",
         "src/wrapper.cc",
         "src/functions/copy.cc",
+        "src/functions/sleep_for_ms.cc",
+        "src/convenient_patch.cc",
+        "src/convenient_hunk.cc",
         "src/str_array_converter.cc",
+        "src/thread_pool.cc",
         {% each %}
           {% if type != "enum" %}
             "src/{{ name }}.cc",
@@ -27,12 +32,13 @@
 
       "include_dirs": [
         "vendor/libv8-convert",
+        "vendor/libssh2/include",
+        "vendor/openssl/openssl/include",
         "<!(node -e \"require('nan')\")"
       ],
 
       "cflags": [
-        "-Wall",
-        "-std=c++11"
+        "-Wall"
       ],
 
       "conditions": [
@@ -58,24 +64,40 @@
               "WARNING_CFLAGS": [
                 "-Wno-unused-variable",
                 "-Wint-conversions",
-                "-Wmissing-field-initializers"
-              ],
-              "OTHER_CPLUSPLUSFLAGS" : [
-                "-std=gnu++11",
-                "-stdlib=libc++"
-              ],
-              "OTHER_LDFLAGS": [
-                "-stdlib=libc++"
+                "-Wmissing-field-initializers",
+                "-Wno-c++11-extensions"
               ]
             }
           }
-        ], [
+        ],
+        [
           "OS=='win'", {
-            "cflags": [
-              "/EHsc"
-            ],
             "defines": [
-            "_HAS_EXCEPTIONS=1"
+              "_HAS_EXCEPTIONS=1"
+            ],
+            "msvs_settings": {
+              "VCCLCompilerTool": {
+                "AdditionalOptions": [
+                  "/EHsc"
+                ]
+              },
+              "VCLinkerTool": {
+                "AdditionalOptions": [
+                  "/FORCE:MULTIPLE"
+                ]
+              }
+            }
+          }
+        ], [
+          "OS=='linux' and '<!(echo \"$CXX\")'=='clang++'", {
+            "cflags": [
+              "-Wno-c++11-extensions"
+            ]
+          }
+        ], [
+          "OS=='linux' and '<!(echo \"$CXX\")'!='clang++'", {
+            "cflags": [
+              "-std=c++0x"
             ]
           }
         ]

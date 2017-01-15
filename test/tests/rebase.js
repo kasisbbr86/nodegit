@@ -1,48 +1,33 @@
 var assert = require("assert");
 var path = require("path");
 var local = path.join.bind(path, __dirname);
-var Promise = require("nodegit-promise");
 var promisify = require("promisify-node");
 var fse = promisify(require("fs-extra"));
 
 describe("Rebase", function() {
   var NodeGit = require("../../");
+  var RepoUtils = require("../utils/repository_setup");
 
   var repoPath = local("../repos/rebase");
   var ourBranchName = "ours";
   var theirBranchName = "theirs";
 
-  var addFileToIndex = function(repository, fileName) {
-    return repository.openIndex()
-      .then(function(index) {
-        index.read(1);
-        index.addByPath(fileName);
-        index.write();
-
-        return index.writeTree();
-      });
-  };
-
   var removeFileFromIndex = function(repository, fileName) {
-    return repository.openIndex()
+    return repository.refreshIndex()
       .then(function(index) {
-        index.read(1);
-        index.removeByPath(fileName);
-        index.write();
-
-        return index.writeTree();
+        return index.removeByPath(fileName)
+          .then(function() {
+            return index.write();
+          })
+          .then(function() {
+            return index.writeTree();
+          });
       });
   };
 
   beforeEach(function() {
     var test = this;
-    return fse.remove(repoPath)
-      .then(function() {
-        return fse.ensureDir(repoPath);
-      })
-      .then(function() {
-        return NodeGit.Repository.init(repoPath, 0);
-      })
+    return RepoUtils.createRepository(repoPath)
       .then(function(repo) {
         test.repository = repo;
       });
@@ -72,7 +57,7 @@ describe("Rebase", function() {
         ourFileContent)
       // Load up the repository index and make our initial commit to HEAD
       .then(function() {
-        return addFileToIndex(repository, ourFileName);
+        return RepoUtils.addFileToIndex(repository, ourFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -100,7 +85,7 @@ describe("Rebase", function() {
           theirFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, theirFileName);
+        return RepoUtils.addFileToIndex(repository, theirFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -143,14 +128,12 @@ describe("Rebase", function() {
           "0e9231d489b3f4303635fc4b0397830da095e7e7");
 
         return NodeGit.Rebase.init(repository, ourAnnotatedCommit,
-          theirAnnotatedCommit, theirAnnotatedCommit, ourSignature,
-          new NodeGit.RebaseOptions());
+          theirAnnotatedCommit, theirAnnotatedCommit);
       })
       .then(function(rebase) {
         assert.equal(rebase.operationEntrycount(), 0);
-        assert.equal(rebase.operationCurrent(), 0);
 
-        return rebase.finish(ourSignature, new NodeGit.RebaseOptions());
+        return rebase.finish(ourSignature);
       })
       .then(function() {
         return repository.getBranchCommit(ourBranchName);
@@ -185,7 +168,7 @@ describe("Rebase", function() {
       baseFileContent)
       // Load up the repository index and make our initial commit to HEAD
       .then(function() {
-        return addFileToIndex(repository, baseFileName);
+        return RepoUtils.addFileToIndex(repository, baseFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -214,7 +197,7 @@ describe("Rebase", function() {
           theirFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, theirFileName);
+        return RepoUtils.addFileToIndex(repository, theirFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -237,7 +220,7 @@ describe("Rebase", function() {
           ourFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, ourFileName);
+        return RepoUtils.addFileToIndex(repository, ourFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -284,7 +267,7 @@ describe("Rebase", function() {
           "e9ebd92f2f4778baf6fa8e92f0c68642f931a554");
 
         return NodeGit.Rebase.init(repository, ourAnnotatedCommit,
-          theirAnnotatedCommit, null, ourSignature, null);
+          theirAnnotatedCommit, null);
       })
       .then(function(newRebase) {
         rebase = newRebase;
@@ -292,10 +275,7 @@ describe("Rebase", function() {
         // there should only be 1 rebase operation to perform
         assert.equal(rebase.operationEntrycount(), 1);
 
-        var opts = new NodeGit.CheckoutOptions();
-        opts.checkoutStrategy = NodeGit.Checkout.STRATEGY.SAFE_CREATE;
-
-        return rebase.next(opts);
+        return rebase.next();
       })
       .then(function(rebaseOperation) {
         assert.equal(rebaseOperation.type(),
@@ -369,7 +349,7 @@ describe("Rebase", function() {
     return fse.writeFile(path.join(repository.workdir(), fileName),
       baseFileContent)
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -398,7 +378,7 @@ describe("Rebase", function() {
           baseFileContent + theirFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -415,7 +395,7 @@ describe("Rebase", function() {
           baseFileContent + ourFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -460,7 +440,7 @@ describe("Rebase", function() {
           "b3c355bb606ec7da87174dfa1a0b0c0e3dc97bc0");
 
         return NodeGit.Rebase.init(repository, ourAnnotatedCommit,
-          theirAnnotatedCommit, null, ourSignature, null);
+          theirAnnotatedCommit, null);
       })
       .then(function(newRebase) {
         rebase = newRebase;
@@ -476,7 +456,7 @@ describe("Rebase", function() {
         assert.equal(rebaseOperation.id().toString(),
           "28cfeb17f66132edb3c4dacb7ff38e8dd48a1844");
 
-        return repository.openIndex()
+        return repository.refreshIndex()
           .then(function(index) {
             assert.ok(index.hasConflicts());
           });
@@ -491,10 +471,10 @@ describe("Rebase", function() {
           });
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
-        return repository.openIndex()
+        return repository.refreshIndex()
           .then(function(index) {
             assert.ok(!index.hasConflicts());
 
@@ -550,7 +530,7 @@ describe("Rebase", function() {
       baseFileContent)
       // Load up the repository index and make our initial commit to HEAD
       .then(function() {
-        return addFileToIndex(repository, baseFileName);
+        return RepoUtils.addFileToIndex(repository, baseFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -579,7 +559,7 @@ describe("Rebase", function() {
           theirFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, theirFileName);
+        return RepoUtils.addFileToIndex(repository, theirFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -602,7 +582,7 @@ describe("Rebase", function() {
           ourFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, ourFileName);
+        return RepoUtils.addFileToIndex(repository, ourFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -649,7 +629,7 @@ describe("Rebase", function() {
           "e9ebd92f2f4778baf6fa8e92f0c68642f931a554");
 
         return NodeGit.Rebase.init(repository, ourAnnotatedCommit,
-          theirAnnotatedCommit, null, ourSignature, null);
+          theirAnnotatedCommit, null);
       })
       .then(function(newRebase) {
         rebase = newRebase;
@@ -707,7 +687,8 @@ describe("Rebase", function() {
       });
   });
 
-  it("can fast-forward via rebase using the convenience methods", function() {
+  it("can fast-forward via rebase using the convenience methods",
+    function() {
     var ourFileName = "ourNewFile.txt";
     var theirFileName = "theirNewFile.txt";
 
@@ -727,7 +708,7 @@ describe("Rebase", function() {
         ourFileContent)
       // Load up the repository index and make our initial commit to HEAD
       .then(function() {
-        return addFileToIndex(repository, ourFileName);
+        return RepoUtils.addFileToIndex(repository, ourFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -755,7 +736,7 @@ describe("Rebase", function() {
           theirFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, theirFileName);
+        return RepoUtils.addFileToIndex(repository, theirFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -828,11 +809,13 @@ describe("Rebase", function() {
     var ourBranch;
     var theirBranch;
 
+    var nextCalls = 0;
+
     return fse.writeFile(path.join(repository.workdir(), baseFileName),
       baseFileContent)
       // Load up the repository index and make our initial commit to HEAD
       .then(function() {
-        return addFileToIndex(repository, baseFileName);
+        return RepoUtils.addFileToIndex(repository, baseFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -861,7 +844,7 @@ describe("Rebase", function() {
           theirFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, theirFileName);
+        return RepoUtils.addFileToIndex(repository, theirFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -884,7 +867,7 @@ describe("Rebase", function() {
           ourFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, ourFileName);
+        return RepoUtils.addFileToIndex(repository, ourFileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -907,9 +890,18 @@ describe("Rebase", function() {
       })
       .then(function() {
         return repository.rebaseBranches(ourBranchName, theirBranchName,
-          null, ourSignature);
+          null, ourSignature, function(rebase) {
+            assert.ok(rebase instanceof NodeGit.Rebase);
+
+            nextCalls++;
+
+            return Promise.resolve();
+          });
       })
       .then(function(commit) {
+        // verify that the beforeNextFn callback was called
+        assert.equal(nextCalls, 2);
+
         // verify that the "ours" branch has moved to the correct place
         assert.equal(commit.id().toString(),
           "b937100ee0ea17ef20525306763505a7fe2be29e");
@@ -952,11 +944,12 @@ describe("Rebase", function() {
     var ourCommit;
     var ourBranch;
     var theirBranch;
+    var nextCalls=0;
 
     return fse.writeFile(path.join(repository.workdir(), fileName),
       baseFileContent)
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -985,7 +978,7 @@ describe("Rebase", function() {
           baseFileContent + theirFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -1002,7 +995,7 @@ describe("Rebase", function() {
           baseFileContent + ourFileContent);
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
         assert.equal(oid.toString(),
@@ -1031,6 +1024,8 @@ describe("Rebase", function() {
           .catch(function(index) {
             assert.ok(index);
             assert.ok(index.hasConflicts());
+
+            assert.ok(repository.isRebasing());
           });
       })
       .then(function() {
@@ -1043,20 +1038,32 @@ describe("Rebase", function() {
           });
       })
       .then(function() {
-        return addFileToIndex(repository, fileName);
+        return RepoUtils.addFileToIndex(repository, fileName);
       })
       .then(function(oid) {
-        return repository.openIndex()
+        return repository.refreshIndex()
           .then(function(index) {
             assert.ok(!index.hasConflicts());
 
-            return repository.continueRebase(ourSignature);
+            return repository.continueRebase(ourSignature, function(rebase) {
+              assert.ok(rebase instanceof NodeGit.Rebase);
+
+              nextCalls++;
+
+              return Promise.resolve();
+            });
           });
       })
       .then(function(commit) {
+        // verify that the beforeNextFn callback was called
+        assert.equal(nextCalls, 1);
+
         // verify that the "ours" branch has moved to the correct place
         assert.equal(commit.id().toString(),
           "ef6d0e95167435b3d58f51ab165948c72f6f94b6");
+
+        assert.ok(!repository.isRebasing());
+        assert.ok(repository.isDefaultState());
 
         return commit.parent(0);
       })

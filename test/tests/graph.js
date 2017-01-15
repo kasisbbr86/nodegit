@@ -28,4 +28,37 @@ describe("Graph", function() {
       assert.equal(result.behind, 1);
     });
   });
+
+  it("can tell if a commit is a descendant of another", function() {
+    return Graph.descendantOf(
+      this.repository,
+      "32789a79e71fbc9e04d3eff7425e1771eb595150",
+      "e0aeedcff0584ebe00aed2c03c8ecd10839df908"
+    )
+      .then(function(result) {
+        assert.equal(result, 1);
+      });
+  });
+
+  it("can tell if a commit is not a descendant of another", function() {
+    return Graph.descendantOf(
+      this.repository,
+      "1528a019c504c9b5a68dc7d83bb2a887eb2473af",
+      "32789a79e71fbc9e04d3eff7425e1771eb595150"
+    )
+      .then(function(result) {
+        assert.equal(result, 0);
+      });
+  });
+
+  it("descendantOf will error if provided bad commits", function() {
+    return Graph.descendantOf(
+      this.repository,
+      "81b06facd90fe7a6e9bbd9cee59736a79105b7be",
+      "26744fc697849d370246749b67ac43b792a4af0c"
+    )
+      .catch(function(result) {
+        assert(~result.message.indexOf("81b06fac"));
+      });
+  });
 });

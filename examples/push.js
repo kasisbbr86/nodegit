@@ -30,14 +30,16 @@ fse.remove(path.resolve(__dirname, repoDir))
 
 // Load up the repository index and make our initial commit to HEAD
 .then(function() {
-  return repository.openIndex();
+  return repository.refreshIndex();
 })
 .then(function(index) {
-  index.read(1);
-  index.addByPath(fileName);
-  index.write();
-
-  return index.writeTree();
+  return index.addByPath(fileName)
+    .then(function() {
+      return index.write();
+    })
+    .then(function() {
+      return index.writeTree();
+    });
 })
 .then(function(oid) {
   return repository.createCommit("HEAD", signature, signature,
@@ -51,18 +53,17 @@ fse.remove(path.resolve(__dirname, repoDir))
   .then(function(remoteResult) {
     remote = remoteResult;
 
-    remote.setCallbacks({
-      credentials: function(url, userName) {
-        return nodegit.Cred.sshKeyFromAgent(userName);
-      }
-    });
-
     // Create the push object for this remote
     return remote.push(
       ["refs/heads/master:refs/heads/master"],
-      null,
-      repository.defaultSignature(),
-      "Push to master");
+      {
+        callbacks: {
+          credentials: function(url, userName) {
+            return nodegit.Cred.sshKeyFromAgent(userName);
+          }
+        }
+      }
+    );
   });
 }).done(function() {
   console.log("Done!");
